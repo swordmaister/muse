@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR Persistent Viewer</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; }
+        /* ローディング画面 */
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; z-index: 9999;
+            transition: opacity 0.5s; pointer-events: none; opacity: 0;
+        }
+        #loadingOverlay.visible { opacity: 1; pointer-events: auto; }
+        
+        /* 2D UI（VRモード外用） */
+        .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
+        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; border: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="loadingOverlay">
+        <h2 id="loadingMsg">読込中...</h2>
+    </div>
+
+    <div class="ui-container">
+        <button id="prevBtn">前へ</button>
+        <button id="nextBtn">次へ</button>
+    </div>
+
+    <a-scene webxr="optionalFeatures: laced-hand-tracking, hit-test">
+        
+        <a-assets id="mainAssets"></a-assets>
+
+        <a-sky color="#ECECEC"></a-sky>
+        <a-plane position="0 0 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
+        <a-entity light="type: ambient; color: #BBB"></a-entity>
+        <a-entity light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
+
+        <a-entity id="contentHolder" position="0 0 0"></a-entity>
+
+        <a-entity id="rig" movement-controls="controls: gamepad, keyboard, touch" position="0 0 5">
+            <a-entity camera position="0 1.6 0" look-controls></a-entity>
+            <a-entity oculus-touch-controls="hand: left"></a-entity>
+            <a-entity oculus-touch-controls="hand: right" id="rightController"></a-entity>
+        </a-entity>
+
+    </scene>
+
+    <script>
+        // ==========================================
+        // ★GASのウェブアプリURLを貼り付けます
+        // ==========================================
+        const GAS_WEB_APP_URL = "YOUR_GAS_WEB_APP_URL_HERE";
+        
+        let filesList = []; 
+        let currentIndex = 0;
+        const loader = document.getElementById('loadingOverlay');
+        const contentHolder = document.getElementById('contentHolder');
+
+        // 1. リスト取得と初期化
+        async function init() {
+            try {
+                showLoader("リスト取得中...");
+                const response = await fetch(GAS_WEB_APP_URL);
+                filesList = await response.json();
+                if (filesList.length > 0) {
+                    await loadWork(0);
+                } else {
+                    showLoader("ファイルがありません。");
+                }
+            } catch (e) { showLoader("通信エラー"); }
+        }
+
+        // 2. 作品の読み込み（核心部分）
+        async function loadWork(index) {
+            currentIndex = index;
+            showLoader(`作品 ${filesList[index].name} を読み込み中...`);
+
+            try {
+                // GASからHTMLテキストを取得
+                const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
+                const htmlText = await response.text();
+
+                // ★HTMLパージング（ご提案のアイデア部分）
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlText, 'text/html');
+
+                // 既存の作品をクリア
+                contentHolder.innerHTML = ''; 
+
+                // <body> の中身だけを抽出して挿入
+                // ※重要：A-Frameの場合、<a-scene>タグは除外して、その中身（<a-entity>等）だけを入れる必要があります。
+                const importedScene = doc.querySelector('a-scene');
+                if (importedScene) {
+                    // <a-scene>の中にある子要素をすべて取得して、今のシーンに移し替える
+                    while (importedScene.firstChild) {
+                        contentHolder.appendChild(importedScene.firstChild);
+                    }
+                    console.log("3Dオブジェクトを正常にインポートしました。");
+                } else {
+                    // <a-scene>がない場合、<body>全体を入れる（推奨しない構成ですが、フォールバック）
+                    contentHolder.innerHTML = doc.body.innerHTML;
+                }
+
+            } catch (e) { console.error(e); }
+
+            hideLoader();
+        }
+
+        // 3. Questコントローラー（右手）のABボタンで切り替え
+        document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
+        document.getElementById('rightController').addEventListener('bbuttondown', () => switchWork('prev'));
+
+        // 4. 切り替えロジック
+        function switchWork(direction) {
+            let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
+            if (next >= filesList.length) next = 0;
+            if (next < 0) next = filesList.length - 1;
+            loadWork(next);
+        }
+
+        // 5. ローディング制御
+        function showLoader(msg) { document.getElementById('loadingMsg').textContent = msg; loader.classList.add('visible'); }
+        function hideLoader() { loader.classList.remove('visible'); }
+
+        // 2Dボタンイベント
+        document.getElementById('nextBtn').onclick = () => switchWork('next');
+        document.getElementById('prevBtn').onclick = () => switchWork('prev');
+
+        window.onload = init;
+    </script>
+</body>
+</html>
