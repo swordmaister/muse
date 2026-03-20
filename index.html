@@ -6,10 +6,9 @@
     <title>WebXR Persistent Viewer</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.0/nipplejs.min.js"></script>
     
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; user-select: none; }
         
         /* ローディング画面 */
         #loadingOverlay {
@@ -22,7 +21,7 @@
         
         /* 2D UI */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
-        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        .base-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         
         #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none; }
         #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
@@ -40,123 +39,130 @@
         .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
         #closeOptionsBtn { background: #ff4757; color: #fff; margin-top: 10px; }
 
-        /* ジョイスティックとY軸移動UI */
-        .joystick-zone { position: fixed; bottom: 0; width: 40%; height: 50%; z-index: 50; display: none; touch-action: none; }
-        #joystick-zone-left { left: 0; }
-        #joystick-zone-right { right: 0; }
-        #elevation-controls {
-            position: fixed; right: 15px; top: 50%; transform: translateY(-50%);
-            display: none; flex-direction: column; gap: 15px; z-index: 50;
-        }
-        #elevation-controls button {
-            width: 50px; height: 50px; border-radius: 25px; font-size: 20px; font-weight: bold;
-            background: rgba(255,255,255,0.6); color: #000; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.5); padding: 0;
-        }
+        /* カスタム十字キー UI (XYZ移動用) */
+        #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: none; justify-content: space-between; pointer-events: none; }
+        
+        #dpad-container { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 5px; pointer-events: auto; }
+        .dpad-btn { width: 100%; height: 100%; border-radius: 10px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
+        .dpad-btn:active { background: rgba(255,255,255,0.8); }
+        #btn-fwd { grid-column: 2; grid-row: 1; }
+        #btn-left { grid-column: 1; grid-row: 2; }
+        #btn-right { grid-column: 3; grid-row: 2; }
+        #btn-back { grid-column: 2; grid-row: 3; }
+
+        #y-container { display: flex; flex-direction: column; gap: 10px; justify-content: center; pointer-events: auto; }
+        .y-btn { width: 50px; height: 50px; border-radius: 25px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
+        .y-btn:active { background: rgba(255,255,255,0.8); }
+
     </style>
 
     <script>
         // ==========================================
-        // A-Frame カスタムコンポーネント群
+        // カスタムコンポーネント（タッチ操作を完全自作）
         // ==========================================
 
-        // 1. ピンチズーム（接近・離脱）コンポーネント
+        // 1. ピンチズーム（接近・離脱）
         AFRAME.registerComponent('pinch-zoom', {
             init: function () {
-                this.initialPinchDistance = 0;
-                this.initialRigZ = 0;
+                this.initialDistance = 0;
+                this.initialZ = 0;
                 this.rig = document.getElementById('rig');
-
-                // キャンバスが生成されてからイベントを紐づける
-                this.el.addEventListener('loaded', () => {
-                    const canvas = this.el.sceneEl.canvas;
-                    canvas.addEventListener('touchstart', this.onTouchStart.bind(this), {passive: false});
-                    canvas.addEventListener('touchmove', this.onTouchMove.bind(this), {passive: false});
-                    canvas.addEventListener('touchend', this.onTouchEnd.bind(this));
-                });
-            },
-            onTouchStart: function(e) {
-                if (e.touches.length === 2) {
-                    this.initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    this.initialRigZ = this.rig.object3D.position.z;
-                }
-            },
-            onTouchMove: function(e) {
-                if (e.touches.length === 2 && this.initialPinchDistance) {
-                    e.preventDefault(); // ブラウザデフォルトのズームを確実に防ぐ
-                    const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    const delta = currentDistance - this.initialPinchDistance;
-                    const zoomSpeed = 0.02; // スピード調整
-                    let newZ = this.initialRigZ - delta * zoomSpeed;
-                    
-                    // 行き過ぎ防止（0.5m 〜 30m）
-                    newZ = Math.max(0.5, Math.min(newZ, 30)); 
-                    this.rig.object3D.position.z = newZ;
-                }
-            },
-            onTouchEnd: function() { this.initialPinchDistance = 0; }
+                this.el.sceneEl.canvas.addEventListener('touchstart', (e) => {
+                    if (e.touches.length === 2) {
+                        this.initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                        this.initialZ = this.rig.object3D.position.z;
+                    }
+                }, {passive: false});
+                this.el.sceneEl.canvas.addEventListener('touchmove', (e) => {
+                    if (e.touches.length === 2 && this.initialDistance) {
+                        e.preventDefault();
+                        const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                        const delta = currentDistance - this.initialDistance;
+                        let newZ = this.initialZ - delta * 0.02; // スピード調整
+                        this.rig.object3D.position.z = Math.max(0.5, Math.min(newZ, 30));
+                    }
+                }, {passive: false});
+                this.el.sceneEl.canvas.addEventListener('touchend', () => { this.initialDistance = 0; });
+            }
         });
 
-        // 2. 仮想ジョイスティック（XYZ移動＋首振り）コンポーネント
-        AFRAME.registerComponent('joystick-controls', {
+        // 2. 1本指スワイプでの首振り（上下左右を完全解放）
+        AFRAME.registerComponent('custom-touch-look', {
             schema: { enabled: {default: false} },
             init: function () {
-                this.moveVector = new THREE.Vector3(0, 0, 0);
-                this.lookVector = new THREE.Vector2(0, 0);
+                this.pitch = 0;
+                this.yaw = 0;
+                this.isDragging = false;
+                this.lastPos = {x: 0, y: 0};
+                this.camera = document.getElementById('camera');
+
+                const canvas = this.el.sceneEl.canvas;
+                canvas.addEventListener('touchstart', (e) => {
+                    if (e.touches.length === 1 && this.data.enabled) {
+                        this.isDragging = true;
+                        this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY };
+                    }
+                }, {passive: false});
+
+                canvas.addEventListener('touchmove', (e) => {
+                    if (this.isDragging && e.touches.length === 1 && this.data.enabled) {
+                        e.preventDefault();
+                        let deltaX = e.touches[0].pageX - this.lastPos.x;
+                        let deltaY = e.touches[0].pageY - this.lastPos.y;
+                        this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY };
+
+                        this.yaw -= deltaX * 0.005;
+                        this.pitch -= deltaY * 0.005;
+                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch)); // 真下・真上の制限
+
+                        this.camera.object3D.rotation.set(this.pitch, this.yaw, 0);
+                    }
+                }, {passive: false});
+
+                canvas.addEventListener('touchend', () => { this.isDragging = false; });
+            }
+        });
+
+        // 3. UIボタン（十字キー）によるXYZ移動
+        AFRAME.registerComponent('dpad-movement', {
+            schema: { enabled: {default: false} },
+            init: function () {
                 this.rig = document.getElementById('rig');
                 this.camera = document.getElementById('camera');
-                this.moveSpeed = 0.1;
-                this.lookSpeed = 0.04;
-                this.elevationDir = 0;
+                this.moveVector = new THREE.Vector3(0,0,0);
+                this.speed = 0.08;
 
-                // Y軸（上下）移動ボタンのイベント
-                const bindBtn = (id, dir) => {
+                const bindBtn = (id, vec) => {
                     const btn = document.getElementById(id);
-                    const press = (e) => { e.preventDefault(); this.elevationDir = dir; };
-                    const release = (e) => { e.preventDefault(); this.elevationDir = 0; };
+                    if(!btn) return;
+                    const press = (e) => { e.preventDefault(); this.moveVector.add(vec); };
+                    const release = (e) => { e.preventDefault(); this.moveVector.sub(vec); };
+                    
                     btn.addEventListener('touchstart', press, {passive: false});
                     btn.addEventListener('touchend', release, {passive: false});
                     btn.addEventListener('mousedown', press);
                     btn.addEventListener('mouseup', release);
                     btn.addEventListener('mouseleave', release);
                 };
-                bindBtn('elevate-up', 1);
-                bindBtn('elevate-down', -1);
+
+                bindBtn('btn-fwd', new THREE.Vector3(0,0,-1));
+                bindBtn('btn-back', new THREE.Vector3(0,0,1));
+                bindBtn('btn-left', new THREE.Vector3(-1,0,0));
+                bindBtn('btn-right', new THREE.Vector3(1,0,0));
+                bindBtn('btn-up', new THREE.Vector3(0,1,0));
+                bindBtn('btn-down', new THREE.Vector3(0,-1,0));
             },
             tick: function () {
-                if (!this.data.enabled) return;
+                if (!this.data.enabled || this.moveVector.lengthSq() === 0) return;
 
-                // X/Z軸移動 (カメラの向きに依存させる)
-                if (this.moveVector.lengthSq() > 0) {
-                    let yRot = this.camera.object3D.rotation.y;
-                    let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
-                    let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
-                    this.rig.object3D.position.x += moveX * this.moveSpeed;
-                    this.rig.object3D.position.z += moveZ * this.moveSpeed;
-                }
+                // カメラの向いている方向（ヨー角）に合わせて前後左右を計算
+                let yRot = this.camera.object3D.rotation.y;
+                let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
+                let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
 
-                // Y軸移動 (上下)
-                if (this.elevationDir !== 0) {
-                    this.rig.object3D.position.y += this.elevationDir * this.moveSpeed;
-                }
-
-                // 首振り (ピッチ・ヨー回転)
-                if (this.lookVector.lengthSq() > 0) {
-                    let pitch = this.camera.object3D.rotation.x - this.lookVector.y * this.lookSpeed;
-                    let yaw = this.camera.object3D.rotation.y - this.lookVector.x * this.lookSpeed;
-                    
-                    // 真上・真下を向きすぎて画面が反転しないよう制限
-                    const limit = Math.PI / 2 - 0.1; 
-                    pitch = Math.max(-limit, Math.min(limit, pitch));
-
-                    this.camera.object3D.rotation.set(pitch, yaw, 0);
-
-                    // look-controlsを再びオンにした際にカクつかないよう内部データを同期
-                    let lookCtrl = this.camera.components['look-controls'];
-                    if (lookCtrl) {
-                        lookCtrl.pitchObject.rotation.x = pitch;
-                        lookCtrl.yawObject.rotation.y = yaw;
-                    }
-                }
+                this.rig.object3D.position.x += moveX * this.speed;
+                this.rig.object3D.position.z += moveZ * this.speed;
+                this.rig.object3D.position.y += this.moveVector.y * this.speed;
             }
         });
     </script>
@@ -165,18 +171,24 @@
 
     <div id="loadingOverlay"><h2 id="loadingMsg">読込中...</h2></div>
     <div id="fileNameDisplay">ファイル名</div>
-    <button id="optionsBtn">⚙️ 設定</button>
+    <button id="optionsBtn" class="base-btn">⚙️ 設定</button>
 
     <div class="ui-container">
-        <button id="prevBtn">前へ</button>
-        <button id="nextBtn">次へ</button>
+        <button id="prevBtn" class="base-btn">前へ</button>
+        <button id="nextBtn" class="base-btn">次へ</button>
     </div>
 
-    <div id="joystick-zone-left" class="joystick-zone"></div>
-    <div id="joystick-zone-right" class="joystick-zone"></div>
-    <div id="elevation-controls">
-        <button id="elevate-up">▲</button>
-        <button id="elevate-down">▼</button>
+    <div id="movement-ui">
+        <div id="dpad-container">
+            <div id="btn-fwd" class="dpad-btn">W</div>
+            <div id="btn-left" class="dpad-btn">A</div>
+            <div id="btn-right" class="dpad-btn">D</div>
+            <div id="btn-back" class="dpad-btn">S</div>
+        </div>
+        <div id="y-container">
+            <div id="btn-up" class="y-btn">▲</div>
+            <div id="btn-down" class="y-btn">▼</div>
+        </div>
     </div>
 
     <div id="optionsModal">
@@ -203,17 +215,17 @@
             <input type="checkbox" id="gyroToggle" checked>
         </div>
         <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;">
-            <label for="joystickToggle" style="color:#7BC8A4; font-weight:bold;">仮想ジョイスティック<br><span style="font-size:0.8rem; font-weight:normal;">(XYZ自由移動 / 上下首振り対応)</span></label>
-            <input type="checkbox" id="joystickToggle">
+            <label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label>
+            <input type="checkbox" id="movementToggle">
         </div>
-        <button id="closeOptionsBtn">閉じる</button>
+        <button id="closeOptionsBtn" class="base-btn" style="background: #ff4757; color: #fff; margin-top: 10px;">閉じる</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom joystick-controls="enabled: false">
+    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: false" dpad-movement="enabled: false">
         <a-assets id="mainAssets"></a-assets>
 
-        <a-sky color="#ECECEC"></a-sky>
-        <a-plane position="0 0 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
+        <a-sky color="#ECECEC" id="baseSky"></a-sky>
+        <a-plane id="basePlane" position="0 -0.01 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
         <a-entity light="type: ambient; color: #BBB"></a-entity>
         <a-entity light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
 
@@ -233,7 +245,6 @@
         let currentIndex = 0;
         let htmlCache = {}; 
         let autoTimer = null; 
-        let managerLeft = null, managerRight = null;
 
         const loader = document.getElementById('loadingOverlay');
         const contentHolder = document.getElementById('contentHolder');
@@ -244,7 +255,7 @@
         const sceneEl = document.querySelector('a-scene');
 
         // ==========================================
-        // 初期化とリスト取得
+        // システム初期化とロード処理
         // ==========================================
         async function init() {
             try {
@@ -262,9 +273,6 @@
             } catch (e) { showLoader("通信エラー"); console.error(e); }
         }
 
-        // ==========================================
-        // データの取得とキャッシュ
-        // ==========================================
         async function fetchWorkData(index) {
             if (htmlCache[index]) return htmlCache[index];
             const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
@@ -280,17 +288,12 @@
             fetchWorkData(nextIndex).catch(e => console.error(e));
         }
 
-        // ==========================================
-        // 作品の表示ロジック
-        // ==========================================
         async function loadWork(index) {
             currentIndex = index;
-            const fileInfo = filesList[index];
-            
-            fileNameDisplay.textContent = fileInfo.name;
+            fileNameDisplay.textContent = filesList[index].name;
             fileSelect.value = index;
             
-            if (!htmlCache[index]) showLoader(`作品 ${fileInfo.name} を読み込み中...`);
+            if (!htmlCache[index]) showLoader(`作品 ${filesList[index].name} を読み込み中...`);
 
             try {
                 const doc = await fetchWorkData(index);
@@ -298,6 +301,11 @@
 
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
+                    // ★チラつき・動作不良の元凶をフィルタリング
+                    // 読み込み先にある「空」「カメラ」「ライト」などを削除し、重複を防ぐ
+                    const duplicates = importedScene.querySelectorAll('a-sky, a-camera, [camera]');
+                    duplicates.forEach(el => el.remove());
+
                     const children = Array.from(importedScene.children);
                     children.forEach(child => contentHolder.appendChild(child.cloneNode(true)));
                 } else {
@@ -312,7 +320,7 @@
         }
 
         // ==========================================
-        // 切り替えとタイマー制御
+        // 各種制御ロジック
         // ==========================================
         function switchWork(direction) {
             let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
@@ -324,18 +332,15 @@
         function resetAutoSwitchTimer() {
             if (autoTimer) clearTimeout(autoTimer);
             const interval = parseInt(document.getElementById('autoSwitchSelect').value);
-            if (interval > 0) {
-                autoTimer = setTimeout(() => {
-                    let next = (currentIndex + 1) % filesList.length;
-                    loadWork(next);
-                }, interval);
-            }
+            if (interval > 0) autoTimer = setTimeout(() => loadWork((currentIndex + 1) % filesList.length), interval);
         }
 
         function resetViewpoint() {
-            // 位置のリセット（X, Y, Z）
             rig.object3D.position.set(0, 0, 5);
-            // 回転のリセット
+            // カスタム視点の角度もリセット
+            const touchLook = sceneEl.components['custom-touch-look'];
+            if(touchLook) { touchLook.pitch = 0; touchLook.yaw = 0; }
+            
             if (cameraEl.components['look-controls']) {
                 cameraEl.components['look-controls'].pitchObject.rotation.x = 0;
                 cameraEl.components['look-controls'].yawObject.rotation.y = 0;
@@ -344,7 +349,7 @@
         }
 
         // ==========================================
-        // オプションメニューとUI制御
+        // オプションメニューUI連動
         // ==========================================
         const optionsModal = document.getElementById('optionsModal');
         document.getElementById('optionsBtn').onclick = () => optionsModal.classList.add('visible');
@@ -361,49 +366,27 @@
             fileSelect.addEventListener('change', (e) => loadWork(parseInt(e.target.value)));
         }
 
-        // NippleJS（ジョイスティック）の初期化
-        function initJoysticks() {
-            if (managerLeft) return; 
-            
-            managerLeft = nipplejs.create({ zone: document.getElementById('joystick-zone-left'), mode: 'dynamic', color: 'white' });
-            managerRight = nipplejs.create({ zone: document.getElementById('joystick-zone-right'), mode: 'dynamic', color: 'white' });
-
-            const joystickComp = sceneEl.components['joystick-controls'];
-
-            managerLeft.on('move', (evt, data) => joystickComp.moveVector.set(data.vector.x, 0, -data.vector.y));
-            managerLeft.on('end', () => joystickComp.moveVector.set(0, 0, 0));
-
-            managerRight.on('move', (evt, data) => joystickComp.lookVector.set(data.vector.x, data.vector.y));
-            managerRight.on('end', () => joystickComp.lookVector.set(0, 0));
-        }
-
         function updateOptionsUI() {
             document.getElementById('showNameToggle').onchange = (e) => fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
-            document.getElementById('gyroToggle').onchange = (e) => cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: e.target.checked });
             document.getElementById('autoSwitchSelect').onchange = resetAutoSwitchTimer;
 
-            // 仮想ジョイスティックのON/OFF切り替え
-            document.getElementById('joystickToggle').onchange = (e) => {
-                const isEnabled = e.target.checked;
-                const displayStyle = isEnabled ? 'block' : 'none';
-                
-                document.getElementById('joystick-zone-left').style.display = displayStyle;
-                document.getElementById('joystick-zone-right').style.display = displayStyle;
-                document.getElementById('elevation-controls').style.display = isEnabled ? 'flex' : 'none';
+            // ★ジャイロON/OFFとカスタムタッチ視点の切り替え
+            document.getElementById('gyroToggle').onchange = (e) => {
+                const isGyroOn = e.target.checked;
+                // ジャイロONなら標準のlook-controlsを使う。OFFなら自作のタッチ首振りを使う
+                cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: isGyroOn, enabled: isGyroOn });
+                sceneEl.setAttribute('custom-touch-look', 'enabled', !isGyroOn);
+            };
 
-                if (isEnabled) {
-                    initJoysticks();
-                    sceneEl.setAttribute('joystick-controls', 'enabled', true);
-                    // 右スティック（首振り）と競合しないようデフォルトのタッチ視点移動を無効化
-                    cameraEl.setAttribute('look-controls', 'enabled', false); 
-                } else {
-                    sceneEl.setAttribute('joystick-controls', 'enabled', false);
-                    cameraEl.setAttribute('look-controls', 'enabled', true);
-                }
+            // 十字キーUIの表示切り替え
+            document.getElementById('movementToggle').onchange = (e) => {
+                const isEnabled = e.target.checked;
+                document.getElementById('movement-ui').style.display = isEnabled ? 'flex' : 'none';
+                sceneEl.setAttribute('dpad-movement', 'enabled', isEnabled);
             };
         }
 
-        // 共通ボタン・イベント
+        // コントローラー・ボタン登録
         document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
         document.getElementById('rightController').addEventListener('bbuttondown', () => switchWork('prev'));
         document.getElementById('nextBtn').onclick = () => switchWork('next');
