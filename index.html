@@ -13,35 +13,29 @@
         /* ローディング画面 */
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; flex-direction: column; 
-            justify-content: center; align-items: center; z-index: 9999;
+            background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999;
             transition: opacity 0.5s; pointer-events: none; opacity: 0;
         }
         #loadingOverlay.visible { opacity: 1; pointer-events: auto; }
         
-        /* 2D UI */
+        /* スマホ/PC用 2D UI */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
         .base-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-        
         #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none; }
         #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
 
-        /* オプションモーダル */
+        /* オプションモーダル (2D用) */
         #optionsModal {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: rgba(30, 30, 30, 0.95); padding: 25px; border-radius: 10px;
-            z-index: 10000; display: none; flex-direction: column; gap: 15px; width: 80%; max-width: 400px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            background: rgba(30, 30, 30, 0.95); padding: 25px; border-radius: 10px; z-index: 10000; display: none; flex-direction: column; gap: 15px; width: 80%; max-width: 400px; box-shadow: 0 5px 15px rgba(0,0,0,0.5);
         }
         #optionsModal.visible { display: flex; }
         .modal-row { display: flex; justify-content: space-between; align-items: center; }
         .modal-row label { font-size: 1rem; }
         .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
-        #closeOptionsBtn { background: #ff4757; color: #fff; margin-top: 10px; }
 
-        /* カスタム十字キー UI (XYZ移動用) */
+        /* カスタム十字キー UI (スマホ移動用) */
         #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: none; justify-content: space-between; pointer-events: none; }
-        
         #dpad-container { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 5px; pointer-events: auto; }
         .dpad-btn { width: 100%; height: 100%; border-radius: 10px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
         .dpad-btn:active { background: rgba(255,255,255,0.8); }
@@ -49,17 +43,48 @@
         #btn-left { grid-column: 1; grid-row: 2; }
         #btn-right { grid-column: 3; grid-row: 2; }
         #btn-back { grid-column: 2; grid-row: 3; }
-
         #y-container { display: flex; flex-direction: column; gap: 10px; justify-content: center; pointer-events: auto; }
         .y-btn { width: 50px; height: 50px; border-radius: 25px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
         .y-btn:active { background: rgba(255,255,255,0.8); }
-
     </style>
 
     <script>
         // ==========================================
-        // カスタムコンポーネント（タッチ操作を完全自作）
+        // Quest2 コントローラー用アクション
         // ==========================================
+        AFRAME.registerComponent('quest-controller-actions', {
+            init: function () {
+                this.rig = document.getElementById('rig');
+                this.isYUp = false;
+                this.isYDown = false;
+                this.speed = 0.05; // 上下移動のスピード
+
+                const leftCtrl = document.getElementById('leftController');
+                const vrMenu = document.getElementById('vrMenu');
+
+                // 左手Xボタン: VRメニューの表示/非表示を切り替え
+                leftCtrl.addEventListener('xbuttondown', () => {
+                    if (this.el.sceneEl.is('vr-mode')) {
+                        let isVisible = vrMenu.getAttribute('visible');
+                        vrMenu.setAttribute('visible', !isVisible);
+                    } else {
+                        document.getElementById('optionsModal').classList.add('visible');
+                    }
+                });
+
+                // 左手Yボタン: 上昇
+                leftCtrl.addEventListener('ybuttondown', () => { this.isYUp = true; });
+                leftCtrl.addEventListener('ybuttonup', () => { this.isYUp = false; });
+
+                // 左手グリップ: 下降
+                leftCtrl.addEventListener('gripdown', () => { this.isYDown = true; });
+                leftCtrl.addEventListener('gripup', () => { this.isYDown = false; });
+            },
+            tick: function () {
+                if (this.isYUp) this.rig.object3D.position.y += this.speed;
+                if (this.isYDown) this.rig.object3D.position.y -= this.speed;
+            }
+        });
 
         // 1. ピンチズーム（接近・離脱）
         AFRAME.registerComponent('pinch-zoom', {
@@ -78,7 +103,7 @@
                         e.preventDefault();
                         const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                         const delta = currentDistance - this.initialDistance;
-                        let newZ = this.initialZ - delta * 0.02; // スピード調整
+                        let newZ = this.initialZ - delta * 0.02; 
                         this.rig.object3D.position.z = Math.max(0.5, Math.min(newZ, 30));
                     }
                 }, {passive: false});
@@ -86,7 +111,7 @@
             }
         });
 
-        // 2. 1本指スワイプでの首振り（上下左右を完全解放）
+        // 2. スマホ1本指スワイプでの首振り
         AFRAME.registerComponent('custom-touch-look', {
             schema: { enabled: {default: false} },
             init: function () {
@@ -95,8 +120,8 @@
                 this.isDragging = false;
                 this.lastPos = {x: 0, y: 0};
                 this.camera = document.getElementById('camera');
-
                 const canvas = this.el.sceneEl.canvas;
+
                 canvas.addEventListener('touchstart', (e) => {
                     if (e.touches.length === 1 && this.data.enabled) {
                         this.isDragging = true;
@@ -113,17 +138,15 @@
 
                         this.yaw -= deltaX * 0.005;
                         this.pitch -= deltaY * 0.005;
-                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch)); // 真下・真上の制限
-
+                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch)); 
                         this.camera.object3D.rotation.set(this.pitch, this.yaw, 0);
                     }
                 }, {passive: false});
-
                 canvas.addEventListener('touchend', () => { this.isDragging = false; });
             }
         });
 
-        // 3. UIボタン（十字キー）によるXYZ移動
+        // 3. UIボタンによるXYZ移動
         AFRAME.registerComponent('dpad-movement', {
             schema: { enabled: {default: false} },
             init: function () {
@@ -137,7 +160,6 @@
                     if(!btn) return;
                     const press = (e) => { e.preventDefault(); this.moveVector.add(vec); };
                     const release = (e) => { e.preventDefault(); this.moveVector.sub(vec); };
-                    
                     btn.addEventListener('touchstart', press, {passive: false});
                     btn.addEventListener('touchend', release, {passive: false});
                     btn.addEventListener('mousedown', press);
@@ -154,12 +176,9 @@
             },
             tick: function () {
                 if (!this.data.enabled || this.moveVector.lengthSq() === 0) return;
-
-                // カメラの向いている方向（ヨー角）に合わせて前後左右を計算
                 let yRot = this.camera.object3D.rotation.y;
                 let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
                 let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
-
                 this.rig.object3D.position.x += moveX * this.speed;
                 this.rig.object3D.position.z += moveZ * this.speed;
                 this.rig.object3D.position.y += this.moveVector.y * this.speed;
@@ -193,35 +212,18 @@
 
     <div id="optionsModal">
         <h3 style="margin-top: 0; text-align: center;">オプション</h3>
-        <div class="modal-row">
-            <label for="fileSelect">ファイルへ移動:</label>
-            <select id="fileSelect"></select>
-        </div>
+        <div class="modal-row"><label for="fileSelect">ファイルへ移動:</label><select id="fileSelect"></select></div>
         <div class="modal-row">
             <label for="autoSwitchSelect">自動切り替え:</label>
-            <select id="autoSwitchSelect">
-                <option value="0">オフ</option>
-                <option value="5000">5秒</option>
-                <option value="10000">10秒</option>
-                <option value="30000">30秒</option>
-            </select>
+            <select id="autoSwitchSelect"><option value="0">オフ</option><option value="5000">5秒</option><option value="10000">10秒</option><option value="30000">30秒</option></select>
         </div>
-        <div class="modal-row">
-            <label for="showNameToggle">ファイル名表示:</label>
-            <input type="checkbox" id="showNameToggle" checked>
-        </div>
-        <div class="modal-row">
-            <label for="gyroToggle">スマホジャイロ (傾き):</label>
-            <input type="checkbox" id="gyroToggle" checked>
-        </div>
-        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;">
-            <label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label>
-            <input type="checkbox" id="movementToggle">
-        </div>
+        <div class="modal-row"><label for="showNameToggle">ファイル名表示:</label><input type="checkbox" id="showNameToggle" checked></div>
+        <div class="modal-row"><label for="gyroToggle">スマホジャイロ (傾き):</label><input type="checkbox" id="gyroToggle" checked></div>
+        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;"><label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label><input type="checkbox" id="movementToggle"></div>
         <button id="closeOptionsBtn" class="base-btn" style="background: #ff4757; color: #fff; margin-top: 10px;">閉じる</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: false" dpad-movement="enabled: false">
+    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: false" dpad-movement="enabled: false" quest-controller-actions>
         <a-assets id="mainAssets"></a-assets>
 
         <a-sky color="#ECECEC" id="baseSky"></a-sky>
@@ -232,9 +234,27 @@
         <a-entity id="contentHolder" position="0 0 0"></a-entity>
 
         <a-entity id="rig" movement-controls="controls: gamepad, keyboard" position="0 0 5">
-            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: true; magicWindowTrackingEnabled: true; pointerLockEnabled: false"></a-entity>
-            <a-entity oculus-touch-controls="hand: left"></a-entity>
-            <a-entity oculus-touch-controls="hand: right" id="rightController"></a-entity>
+            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: true; magicWindowTrackingEnabled: true; pointerLockEnabled: false">
+                <a-text id="vrFileNameDisplay" value="Loading..." position="0 0.6 -1.5" align="center" width="2" color="#333" visible="true"></a-text>
+            </a-entity>
+
+            <a-entity id="leftController" oculus-touch-controls="hand: left">
+                <a-entity id="vrMenu" visible="false" position="0 0.15 -0.05" rotation="-45 0 0">
+                    <a-plane width="0.35" height="0.35" color="#111" opacity="0.95" border-radius="0.05"></a-plane>
+                    <a-text value="VR Options Menu" position="0 0.14 0.01" align="center" width="0.8" color="#7BC8A4"></a-text>
+
+                    <a-entity class="vr-btn" id="vrBtnPrev" position="-0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: < Prev; align: center; width: 0.6"></a-entity>
+                    <a-entity class="vr-btn" id="vrBtnNext" position="0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: Next >; align: center; width: 0.6"></a-entity>
+                    
+                    <a-entity class="vr-btn" id="vrBtnAuto" position="0 0.0 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: Auto Switch: OFF; align: center; width: 0.6"></a-entity>
+                    
+                    <a-entity class="vr-btn" id="vrBtnName" position="0 -0.07 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: File Name: ON; align: center; width: 0.6"></a-entity>
+                    
+                    <a-entity class="vr-btn" id="vrBtnClose" position="0 -0.14 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #A33" text="value: Close Menu; align: center; width: 0.6"></a-entity>
+                </a-entity>
+            </a-entity>
+
+            <a-entity id="rightController" oculus-touch-controls="hand: right" raycaster="objects: .vr-btn; showLine: true; far: 2" cursor="rayOrigin: entity"></a-entity>
         </a-entity>
     </a-scene>
 
@@ -245,19 +265,21 @@
         let currentIndex = 0;
         let htmlCache = {}; 
         let autoTimer = null; 
+        let vrAutoIntervals = [0, 5000, 10000, 30000];
+        let vrAutoIndex = 0;
 
         const loader = document.getElementById('loadingOverlay');
         const contentHolder = document.getElementById('contentHolder');
         const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const vrFileNameDisplay = document.getElementById('vrFileNameDisplay');
         const fileSelect = document.getElementById('fileSelect');
         const rig = document.getElementById('rig');
         const cameraEl = document.getElementById('camera');
         const sceneEl = document.querySelector('a-scene');
 
-        // ==========================================
-        // システム初期化とロード処理
-        // ==========================================
+        // システム初期化
         async function init() {
+            setupVRMenuEvents();
             try {
                 showLoader("リスト取得中...");
                 const response = await fetch(GAS_WEB_APP_URL);
@@ -290,22 +312,23 @@
 
         async function loadWork(index) {
             currentIndex = index;
-            fileNameDisplay.textContent = filesList[index].name;
-            fileSelect.value = index;
+            // 日本語のファイル名だとVR上で文字化けする可能性があるため、ここでは便宜上「Work X」の形式も表示
+            const displayName = filesList[index].name;
+            fileNameDisplay.textContent = displayName;
             
-            if (!htmlCache[index]) showLoader(`作品 ${filesList[index].name} を読み込み中...`);
+            // A-Frame標準フォント対策（文字化けを防ぐためローマ字やIDなどに置換する運用も検討）
+            vrFileNameDisplay.setAttribute('value', "Now Showing: " + displayName); 
+            
+            fileSelect.value = index;
+            if (!htmlCache[index]) showLoader(`作品 ${displayName} を読み込み中...`);
 
             try {
                 const doc = await fetchWorkData(index);
                 contentHolder.innerHTML = ''; 
-
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    // ★チラつき・動作不良の元凶をフィルタリング
-                    // 読み込み先にある「空」「カメラ」「ライト」などを削除し、重複を防ぐ
                     const duplicates = importedScene.querySelectorAll('a-sky, a-camera, [camera]');
                     duplicates.forEach(el => el.remove());
-
                     const children = Array.from(importedScene.children);
                     children.forEach(child => contentHolder.appendChild(child.cloneNode(true)));
                 } else {
@@ -319,9 +342,6 @@
             resetAutoSwitchTimer();
         }
 
-        // ==========================================
-        // 各種制御ロジック
-        // ==========================================
         function switchWork(direction) {
             let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
             if (next >= filesList.length) next = 0;
@@ -337,10 +357,8 @@
 
         function resetViewpoint() {
             rig.object3D.position.set(0, 0, 5);
-            // カスタム視点の角度もリセット
             const touchLook = sceneEl.components['custom-touch-look'];
             if(touchLook) { touchLook.pitch = 0; touchLook.yaw = 0; }
-            
             if (cameraEl.components['look-controls']) {
                 cameraEl.components['look-controls'].pitchObject.rotation.x = 0;
                 cameraEl.components['look-controls'].yawObject.rotation.y = 0;
@@ -349,8 +367,48 @@
         }
 
         // ==========================================
-        // オプションメニューUI連動
+        // UI & VR メニュー連携
         // ==========================================
+        function toggleFileNameDisplay(isON) {
+            fileNameDisplay.style.display = isON ? 'block' : 'none';
+            vrFileNameDisplay.setAttribute('visible', isON);
+            document.getElementById('showNameToggle').checked = isON;
+            document.getElementById('vrBtnName').setAttribute('text', 'value', 'File Name: ' + (isON ? 'ON' : 'OFF'));
+        }
+
+        function setupVRMenuEvents() {
+            // ホバーアクション (色を変える)
+            document.querySelectorAll('.vr-btn').forEach(btn => {
+                btn.addEventListener('mouseenter', function() {
+                    this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#E55' : '#666');
+                });
+                btn.addEventListener('mouseleave', function() {
+                    this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#A33' : '#444');
+                });
+            });
+
+            // クリックアクション (右手トリガー)
+            document.getElementById('vrBtnPrev').addEventListener('click', () => switchWork('prev'));
+            document.getElementById('vrBtnNext').addEventListener('click', () => switchWork('next'));
+            document.getElementById('vrBtnClose').addEventListener('click', () => document.getElementById('vrMenu').setAttribute('visible', false));
+            
+            // 自動切り替え
+            document.getElementById('vrBtnAuto').addEventListener('click', function() {
+                vrAutoIndex = (vrAutoIndex + 1) % vrAutoIntervals.length;
+                let val = vrAutoIntervals[vrAutoIndex];
+                let text = val === 0 ? 'OFF' : (val/1000) + 's';
+                this.setAttribute('text', 'value', 'Auto Switch: ' + text);
+                document.getElementById('autoSwitchSelect').value = val;
+                resetAutoSwitchTimer();
+            });
+
+            // ファイル名表示
+            document.getElementById('vrBtnName').addEventListener('click', function() {
+                let isON = document.getElementById('showNameToggle').checked;
+                toggleFileNameDisplay(!isON);
+            });
+        }
+
         const optionsModal = document.getElementById('optionsModal');
         document.getElementById('optionsBtn').onclick = () => optionsModal.classList.add('visible');
         document.getElementById('closeOptionsBtn').onclick = () => optionsModal.classList.remove('visible');
@@ -367,18 +425,18 @@
         }
 
         function updateOptionsUI() {
-            document.getElementById('showNameToggle').onchange = (e) => fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
-            document.getElementById('autoSwitchSelect').onchange = resetAutoSwitchTimer;
-
-            // ★ジャイロON/OFFとカスタムタッチ視点の切り替え
+            document.getElementById('showNameToggle').onchange = (e) => toggleFileNameDisplay(e.target.checked);
+            document.getElementById('autoSwitchSelect').onchange = (e) => {
+                vrAutoIndex = vrAutoIntervals.indexOf(parseInt(e.target.value));
+                let text = vrAutoIndex === 0 ? 'OFF' : (vrAutoIntervals[vrAutoIndex]/1000) + 's';
+                document.getElementById('vrBtnAuto').setAttribute('text', 'value', 'Auto Switch: ' + text);
+                resetAutoSwitchTimer();
+            };
             document.getElementById('gyroToggle').onchange = (e) => {
                 const isGyroOn = e.target.checked;
-                // ジャイロONなら標準のlook-controlsを使う。OFFなら自作のタッチ首振りを使う
                 cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: isGyroOn, enabled: isGyroOn });
                 sceneEl.setAttribute('custom-touch-look', 'enabled', !isGyroOn);
             };
-
-            // 十字キーUIの表示切り替え
             document.getElementById('movementToggle').onchange = (e) => {
                 const isEnabled = e.target.checked;
                 document.getElementById('movement-ui').style.display = isEnabled ? 'flex' : 'none';
@@ -386,7 +444,6 @@
             };
         }
 
-        // コントローラー・ボタン登録
         document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
         document.getElementById('rightController').addEventListener('bbuttondown', () => switchWork('prev'));
         document.getElementById('nextBtn').onclick = () => switchWork('next');
