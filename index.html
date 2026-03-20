@@ -2,13 +2,14 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>WebXR Persistent Viewer</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
     
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; }
+        
         /* ローディング画面 */
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -20,22 +21,69 @@
         
         /* 2D UI（VRモード外用） */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
-        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; border: none; border-radius: 5px; }
+        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        
+        /* ファイル名常時表示 */
+        #fileNameDisplay {
+            position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6);
+            padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none;
+        }
+
+        /* オプションメニューボタン */
+        #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
+
+        /* オプションモーダル */
+        #optionsModal {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(30, 30, 30, 0.95); padding: 25px; border-radius: 10px;
+            z-index: 10000; display: none; flex-direction: column; gap: 15px; width: 80%; max-width: 400px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+        }
+        #optionsModal.visible { display: flex; }
+        .modal-row { display: flex; justify-content: space-between; align-items: center; }
+        .modal-row label { font-size: 1rem; }
+        .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
+        #closeOptionsBtn { background: #ff4757; color: #fff; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="loadingOverlay">
-        <h2 id="loadingMsg">読込中...</h2>
-    </div>
+    <div id="loadingOverlay"><h2 id="loadingMsg">読込中...</h2></div>
+    <div id="fileNameDisplay">ファイル名</div>
+    <button id="optionsBtn">⚙️ 設定</button>
 
     <div class="ui-container">
         <button id="prevBtn">前へ</button>
         <button id="nextBtn">次へ</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: laced-hand-tracking, hit-test">
-        
+    <div id="optionsModal">
+        <h3 style="margin-top: 0; text-align: center;">オプション</h3>
+        <div class="modal-row">
+            <label for="fileSelect">ファイルへ移動:</label>
+            <select id="fileSelect"></select>
+        </div>
+        <div class="modal-row">
+            <label for="autoSwitchSelect">自動切り替え:</label>
+            <select id="autoSwitchSelect">
+                <option value="0">オフ</option>
+                <option value="5000">5秒</option>
+                <option value="10000">10秒</option>
+                <option value="30000">30秒</option>
+            </select>
+        </div>
+        <div class="modal-row">
+            <label for="showNameToggle">ファイル名表示:</label>
+            <input type="checkbox" id="showNameToggle" checked>
+        </div>
+        <div class="modal-row">
+            <label for="gyroToggle">スマホジャイロ (傾き):</label>
+            <input type="checkbox" id="gyroToggle" checked>
+        </div>
+        <button id="closeOptionsBtn">閉じる</button>
+    </div>
+
+    <a-scene webxr="optionalFeatures: hit-test">
         <a-assets id="mainAssets"></a-assets>
 
         <a-sky color="#ECECEC"></a-sky>
@@ -46,79 +94,105 @@
         <a-entity id="contentHolder" position="0 0 0"></a-entity>
 
         <a-entity id="rig" movement-controls="controls: gamepad, keyboard, touch" position="0 0 5">
-            <a-entity camera position="0 1.6 0" look-controls></a-entity>
+            <a-entity id="camera" camera position="0 1.6 0" look-controls="magicWindowTrackingEnabled: true"></a-entity>
             <a-entity oculus-touch-controls="hand: left"></a-entity>
             <a-entity oculus-touch-controls="hand: right" id="rightController"></a-entity>
         </a-entity>
-
-    </scene>
+    </a-scene>
 
     <script>
-        // ==========================================
-        // ★GASのウェブアプリURLを貼り付けます
-        // ==========================================
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzNlRQKSABT7XgRwcjurtzvI3fR4SGRBSU444BXzKoxv6ZAoCYiZzIvTe6oVDzAT4oZ/exec";
         
         let filesList = []; 
         let currentIndex = 0;
+        let htmlCache = {}; // バックグラウンド読み込み用キャッシュ
+        let autoTimer = null; // 自動切り替え用タイマー
+
         const loader = document.getElementById('loadingOverlay');
         const contentHolder = document.getElementById('contentHolder');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const fileSelect = document.getElementById('fileSelect');
+        const rig = document.getElementById('rig');
+        const cameraEl = document.getElementById('camera');
 
-        // 1. リスト取得と初期化
+        // ==========================================
+        // 1. 初期化とリスト取得
+        // ==========================================
         async function init() {
             try {
                 showLoader("リスト取得中...");
                 const response = await fetch(GAS_WEB_APP_URL);
                 filesList = await response.json();
+                
                 if (filesList.length > 0) {
+                    populateFileList();
                     await loadWork(0);
+                    updateOptionsUI();
                 } else {
                     showLoader("ファイルがありません。");
                 }
             } catch (e) { showLoader("通信エラー"); }
         }
 
-        // 2. 作品の読み込み（核心部分）
+        // ==========================================
+        // 2. データの取得とキャッシュ（バックグラウンド処理）
+        // ==========================================
+        async function fetchWorkData(index) {
+            // 既にキャッシュにあればそれを返す（高速化）
+            if (htmlCache[index]) return htmlCache[index];
+            
+            const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
+            const htmlText = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlText, 'text/html');
+            
+            htmlCache[index] = doc; // キャッシュに保存
+            return doc;
+        }
+
+        // 次のファイルをバックグラウンドで読み込む
+        function preloadNextWork() {
+            let nextIndex = (currentIndex + 1) % filesList.length;
+            fetchWorkData(nextIndex).catch(e => console.error("Preload error:", e));
+        }
+
+        // ==========================================
+        // 3. 作品の表示ロジック
+        // ==========================================
         async function loadWork(index) {
             currentIndex = index;
-            showLoader(`作品 ${filesList[index].name} を読み込み中...`);
+            const fileInfo = filesList[index];
+            
+            // UI更新
+            fileNameDisplay.textContent = fileInfo.name;
+            fileSelect.value = index;
+            
+            // キャッシュにない場合のみローダーを表示
+            if (!htmlCache[index]) showLoader(`作品 ${fileInfo.name} を読み込み中...`);
 
             try {
-                // GASからHTMLテキストを取得
-                const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
-                const htmlText = await response.text();
-
-                // ★HTMLパージング（ご提案のアイデア部分）
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(htmlText, 'text/html');
-
-                // 既存の作品をクリア
+                const doc = await fetchWorkData(index);
                 contentHolder.innerHTML = ''; 
 
-                // <body> の中身だけを抽出して挿入
-                // ※重要：A-Frameの場合、<a-scene>タグは除外して、その中身（<a-entity>等）だけを入れる必要があります。
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    // <a-scene>の中にある子要素をすべて取得して、今のシーンに移し替える
                     while (importedScene.firstChild) {
                         contentHolder.appendChild(importedScene.firstChild);
                     }
-                    console.log("3Dオブジェクトを正常にインポートしました。");
                 } else {
-                    // <a-scene>がない場合、<body>全体を入れる（推奨しない構成ですが、フォールバック）
                     contentHolder.innerHTML = doc.body.innerHTML;
                 }
-
             } catch (e) { console.error(e); }
 
             hideLoader();
+            resetViewpoint(); // 視点距離のリセット
+            preloadNextWork(); // 次の作品を裏でロード
+            resetAutoSwitchTimer(); // タイマーの再設定
         }
 
-        // 3. Questコントローラー（右手）のABボタンで切り替え
-        document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
-        document.getElementById('rightController').addEventListener('bbuttondown', () => switchWork('prev'));
-
-        // 4. 切り替えロジック
+        // ==========================================
+        // 4. 切り替えとタイマー制御
+        // ==========================================
         function switchWork(direction) {
             let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
             if (next >= filesList.length) next = 0;
@@ -126,13 +200,94 @@
             loadWork(next);
         }
 
-        // 5. ローディング制御
-        function showLoader(msg) { document.getElementById('loadingMsg').textContent = msg; loader.classList.add('visible'); }
-        function hideLoader() { loader.classList.remove('visible'); }
+        function resetAutoSwitchTimer() {
+            if (autoTimer) clearTimeout(autoTimer);
+            const interval = parseInt(document.getElementById('autoSwitchSelect').value);
+            if (interval > 0) {
+                autoTimer = setTimeout(() => switchWork('next'), interval);
+            }
+        }
 
-        // 2Dボタンイベント
+        // ==========================================
+        // 5. スマホ用：ピンチ操作による拡大縮小（視点の接近/離脱）
+        // ==========================================
+        let initialPinchDistance = null;
+        let initialRigZ = null;
+
+        document.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                initialRigZ = rig.getAttribute('position').z;
+            }
+        }, {passive: false});
+
+        document.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && initialPinchDistance) {
+                e.preventDefault(); // デフォルトのズームを防止
+                const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                const zoomRatio = initialPinchDistance / currentDistance; // 広げると小さくなる（近づく）
+                
+                let newZ = initialRigZ * zoomRatio;
+                // 行き過ぎないように制限 (1m 〜 20mの範囲)
+                newZ = Math.max(1, Math.min(newZ, 20)); 
+                
+                let currentPos = rig.getAttribute('position');
+                rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: newZ});
+            }
+        }, {passive: false});
+
+        document.addEventListener('touchend', () => { initialPinchDistance = null; });
+
+        function resetViewpoint() {
+            let currentPos = rig.getAttribute('position');
+            rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: 5}); // デフォルト距離に戻す
+        }
+
+        // ==========================================
+        // 6. オプションメニューとUI制御
+        // ==========================================
+        const optionsModal = document.getElementById('optionsModal');
+        
+        document.getElementById('optionsBtn').onclick = () => optionsModal.classList.add('visible');
+        document.getElementById('closeOptionsBtn').onclick = () => optionsModal.classList.remove('visible');
+
+        function populateFileList() {
+            fileSelect.innerHTML = '';
+            filesList.forEach((file, idx) => {
+                let opt = document.createElement('option');
+                opt.value = idx;
+                opt.textContent = file.name;
+                fileSelect.appendChild(opt);
+            });
+            fileSelect.addEventListener('change', (e) => loadWork(parseInt(e.target.value)));
+        }
+
+        function updateOptionsUI() {
+            // ファイル名表示トグル
+            const nameToggle = document.getElementById('showNameToggle');
+            fileNameDisplay.style.display = nameToggle.checked ? 'block' : 'none';
+            nameToggle.addEventListener('change', (e) => {
+                fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
+            });
+
+            // ジャイロトグル (magicWindowTrackingEnabled でスマホの傾き検知を制御)
+            const gyroToggle = document.getElementById('gyroToggle');
+            gyroToggle.addEventListener('change', (e) => {
+                cameraEl.setAttribute('look-controls', `magicWindowTrackingEnabled: ${e.target.checked}`);
+            });
+
+            // 自動切り替えイベント
+            document.getElementById('autoSwitchSelect').addEventListener('change', resetAutoSwitchTimer);
+        }
+
+        // 共通ボタン・イベント
+        document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
+        document.getElementById('rightController').addEventListener('bbuttondown', () => switchWork('prev'));
         document.getElementById('nextBtn').onclick = () => switchWork('next');
         document.getElementById('prevBtn').onclick = () => switchWork('prev');
+
+        function showLoader(msg) { document.getElementById('loadingMsg').textContent = msg; loader.classList.add('visible'); }
+        function hideLoader() { loader.classList.remove('visible'); }
 
         window.onload = init;
     </script>
