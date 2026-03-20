@@ -6,6 +6,7 @@
     <title>WebXR Persistent Viewer</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.0/nipplejs.min.js"></script>
     
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; }
@@ -19,17 +20,11 @@
         }
         #loadingOverlay.visible { opacity: 1; pointer-events: auto; }
         
-        /* 2D UI（VRモード外用） */
+        /* 2D UI */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
         button { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         
-        /* ファイル名常時表示 */
-        #fileNameDisplay {
-            position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6);
-            padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none;
-        }
-
-        /* オプションメニューボタン */
+        #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none; }
         #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
 
         /* オプションモーダル */
@@ -44,7 +39,127 @@
         .modal-row label { font-size: 1rem; }
         .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
         #closeOptionsBtn { background: #ff4757; color: #fff; margin-top: 10px; }
+
+        /* ジョイスティックとY軸移動UI */
+        .joystick-zone { position: fixed; bottom: 0; width: 40%; height: 50%; z-index: 50; display: none; touch-action: none; }
+        #joystick-zone-left { left: 0; }
+        #joystick-zone-right { right: 0; }
+        #elevation-controls {
+            position: fixed; right: 15px; top: 50%; transform: translateY(-50%);
+            display: none; flex-direction: column; gap: 15px; z-index: 50;
+        }
+        #elevation-controls button {
+            width: 50px; height: 50px; border-radius: 25px; font-size: 20px; font-weight: bold;
+            background: rgba(255,255,255,0.6); color: #000; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.5); padding: 0;
+        }
     </style>
+
+    <script>
+        // ==========================================
+        // A-Frame カスタムコンポーネント群
+        // ==========================================
+
+        // 1. ピンチズーム（接近・離脱）コンポーネント
+        AFRAME.registerComponent('pinch-zoom', {
+            init: function () {
+                this.initialPinchDistance = 0;
+                this.initialRigZ = 0;
+                this.rig = document.getElementById('rig');
+
+                // キャンバスが生成されてからイベントを紐づける
+                this.el.addEventListener('loaded', () => {
+                    const canvas = this.el.sceneEl.canvas;
+                    canvas.addEventListener('touchstart', this.onTouchStart.bind(this), {passive: false});
+                    canvas.addEventListener('touchmove', this.onTouchMove.bind(this), {passive: false});
+                    canvas.addEventListener('touchend', this.onTouchEnd.bind(this));
+                });
+            },
+            onTouchStart: function(e) {
+                if (e.touches.length === 2) {
+                    this.initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                    this.initialRigZ = this.rig.object3D.position.z;
+                }
+            },
+            onTouchMove: function(e) {
+                if (e.touches.length === 2 && this.initialPinchDistance) {
+                    e.preventDefault(); // ブラウザデフォルトのズームを確実に防ぐ
+                    const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                    const delta = currentDistance - this.initialPinchDistance;
+                    const zoomSpeed = 0.02; // スピード調整
+                    let newZ = this.initialRigZ - delta * zoomSpeed;
+                    
+                    // 行き過ぎ防止（0.5m 〜 30m）
+                    newZ = Math.max(0.5, Math.min(newZ, 30)); 
+                    this.rig.object3D.position.z = newZ;
+                }
+            },
+            onTouchEnd: function() { this.initialPinchDistance = 0; }
+        });
+
+        // 2. 仮想ジョイスティック（XYZ移動＋首振り）コンポーネント
+        AFRAME.registerComponent('joystick-controls', {
+            schema: { enabled: {default: false} },
+            init: function () {
+                this.moveVector = new THREE.Vector3(0, 0, 0);
+                this.lookVector = new THREE.Vector2(0, 0);
+                this.rig = document.getElementById('rig');
+                this.camera = document.getElementById('camera');
+                this.moveSpeed = 0.1;
+                this.lookSpeed = 0.04;
+                this.elevationDir = 0;
+
+                // Y軸（上下）移動ボタンのイベント
+                const bindBtn = (id, dir) => {
+                    const btn = document.getElementById(id);
+                    const press = (e) => { e.preventDefault(); this.elevationDir = dir; };
+                    const release = (e) => { e.preventDefault(); this.elevationDir = 0; };
+                    btn.addEventListener('touchstart', press, {passive: false});
+                    btn.addEventListener('touchend', release, {passive: false});
+                    btn.addEventListener('mousedown', press);
+                    btn.addEventListener('mouseup', release);
+                    btn.addEventListener('mouseleave', release);
+                };
+                bindBtn('elevate-up', 1);
+                bindBtn('elevate-down', -1);
+            },
+            tick: function () {
+                if (!this.data.enabled) return;
+
+                // X/Z軸移動 (カメラの向きに依存させる)
+                if (this.moveVector.lengthSq() > 0) {
+                    let yRot = this.camera.object3D.rotation.y;
+                    let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
+                    let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
+                    this.rig.object3D.position.x += moveX * this.moveSpeed;
+                    this.rig.object3D.position.z += moveZ * this.moveSpeed;
+                }
+
+                // Y軸移動 (上下)
+                if (this.elevationDir !== 0) {
+                    this.rig.object3D.position.y += this.elevationDir * this.moveSpeed;
+                }
+
+                // 首振り (ピッチ・ヨー回転)
+                if (this.lookVector.lengthSq() > 0) {
+                    let pitch = this.camera.object3D.rotation.x - this.lookVector.y * this.lookSpeed;
+                    let yaw = this.camera.object3D.rotation.y - this.lookVector.x * this.lookSpeed;
+                    
+                    // 真上・真下を向きすぎて画面が反転しないよう制限
+                    const limit = Math.PI / 2 - 0.1; 
+                    pitch = Math.max(-limit, Math.min(limit, pitch));
+
+                    this.camera.object3D.rotation.set(pitch, yaw, 0);
+
+                    // look-controlsを再びオンにした際にカクつかないよう内部データを同期
+                    let lookCtrl = this.camera.components['look-controls'];
+                    if (lookCtrl) {
+                        lookCtrl.pitchObject.rotation.x = pitch;
+                        lookCtrl.yawObject.rotation.y = yaw;
+                    }
+                }
+            }
+        });
+    </script>
 </head>
 <body>
 
@@ -55,6 +170,13 @@
     <div class="ui-container">
         <button id="prevBtn">前へ</button>
         <button id="nextBtn">次へ</button>
+    </div>
+
+    <div id="joystick-zone-left" class="joystick-zone"></div>
+    <div id="joystick-zone-right" class="joystick-zone"></div>
+    <div id="elevation-controls">
+        <button id="elevate-up">▲</button>
+        <button id="elevate-down">▼</button>
     </div>
 
     <div id="optionsModal">
@@ -77,14 +199,17 @@
             <input type="checkbox" id="showNameToggle" checked>
         </div>
         <div class="modal-row">
-            <label for="gyroToggle">スマホジャイロ (傾きで上下視点):</label>
+            <label for="gyroToggle">スマホジャイロ (傾き):</label>
             <input type="checkbox" id="gyroToggle" checked>
         </div>
-        <div style="font-size: 0.8rem; color: #aaa; text-align: center;">※ジャイロOFF時、スマホの上下視点移動はできません（AFRAMEの仕様）。タッチ操作は左右のみ効きます。</div>
+        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;">
+            <label for="joystickToggle" style="color:#7BC8A4; font-weight:bold;">仮想ジョイスティック<br><span style="font-size:0.8rem; font-weight:normal;">(XYZ自由移動 / 上下首振り対応)</span></label>
+            <input type="checkbox" id="joystickToggle">
+        </div>
         <button id="closeOptionsBtn">閉じる</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false">
+    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom joystick-controls="enabled: false">
         <a-assets id="mainAssets"></a-assets>
 
         <a-sky color="#ECECEC"></a-sky>
@@ -106,8 +231,9 @@
         
         let filesList = []; 
         let currentIndex = 0;
-        let htmlCache = {}; // バックグラウンド読み込み用キャッシュ (DOM Documentをキャッシュ)
-        let autoTimer = null; // 自動切り替え用タイマー
+        let htmlCache = {}; 
+        let autoTimer = null; 
+        let managerLeft = null, managerRight = null;
 
         const loader = document.getElementById('loadingOverlay');
         const contentHolder = document.getElementById('contentHolder');
@@ -115,12 +241,10 @@
         const fileSelect = document.getElementById('fileSelect');
         const rig = document.getElementById('rig');
         const cameraEl = document.getElementById('camera');
-
-        // デフォルトのカメラ距離
-        const DEFAULT_RIG_Z = 5;
+        const sceneEl = document.querySelector('a-scene');
 
         // ==========================================
-        // 1. 初期化とリスト取得
+        // 初期化とリスト取得
         // ==========================================
         async function init() {
             try {
@@ -130,7 +254,6 @@
                 
                 if (filesList.length > 0) {
                     populateFileList();
-                    // オプションUIの初期状態を設定（イベントリスナー登録）
                     updateOptionsUI();
                     await loadWork(0);
                 } else {
@@ -140,39 +263,33 @@
         }
 
         // ==========================================
-        // 2. データの取得とキャッシュ（バックグラウンド処理）
+        // データの取得とキャッシュ
         // ==========================================
         async function fetchWorkData(index) {
-            // 既にキャッシュにあればそれを返す（高速化）
             if (htmlCache[index]) return htmlCache[index];
-            
             const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
             const htmlText = await response.text();
             const parser = new DOMParser();
             const doc = parser.parseFromString(htmlText, 'text/html');
-            
-            htmlCache[index] = doc; // キャッシュに保存
+            htmlCache[index] = doc;
             return doc;
         }
 
-        // 次のファイルをバックグラウンドで読み込む
         function preloadNextWork() {
             let nextIndex = (currentIndex + 1) % filesList.length;
-            fetchWorkData(nextIndex).catch(e => console.error("Preload error:", e));
+            fetchWorkData(nextIndex).catch(e => console.error(e));
         }
 
         // ==========================================
-        // 3. 作品の表示ロジック
+        // 作品の表示ロジック
         // ==========================================
         async function loadWork(index) {
             currentIndex = index;
             const fileInfo = filesList[index];
             
-            // UI更新
             fileNameDisplay.textContent = fileInfo.name;
             fileSelect.value = index;
             
-            // キャッシュにない場合のみローダーを表示
             if (!htmlCache[index]) showLoader(`作品 ${fileInfo.name} を読み込み中...`);
 
             try {
@@ -181,25 +298,21 @@
 
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    // 2周目問題修正: elementsを直接appendChildするのではなく、cloneNode(true) で追加する。
-                    // importedScene.children は Live Collection なので Array.from で取得する
                     const children = Array.from(importedScene.children);
-                    children.forEach(child => {
-                        contentHolder.appendChild(child.cloneNode(true));
-                    });
+                    children.forEach(child => contentHolder.appendChild(child.cloneNode(true)));
                 } else {
                     contentHolder.innerHTML = doc.body.innerHTML;
                 }
             } catch (e) { console.error(e); }
 
             hideLoader();
-            resetViewpoint(); // 視点距離のリセット
-            preloadNextWork(); // 次の作品を裏でロード
-            resetAutoSwitchTimer(); // タイマーの再設定
+            resetViewpoint(); 
+            preloadNextWork();
+            resetAutoSwitchTimer();
         }
 
         // ==========================================
-        // 4. 切り替えとタイマー制御
+        // 切り替えとタイマー制御
         // ==========================================
         function switchWork(direction) {
             let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
@@ -212,7 +325,6 @@
             if (autoTimer) clearTimeout(autoTimer);
             const interval = parseInt(document.getElementById('autoSwitchSelect').value);
             if (interval > 0) {
-                // switchWork('next') ではなく loadWork(next) を呼ぶように調整
                 autoTimer = setTimeout(() => {
                     let next = (currentIndex + 1) % filesList.length;
                     loadWork(next);
@@ -220,49 +332,21 @@
             }
         }
 
-        // ==========================================
-        // 5. スマホ用：ピンチ操作によるズーム（視点の接近/離脱）
-        // ==========================================
-        let initialPinchDistance = null;
-        let initialRigZ = null;
-
-        document.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 2) {
-                initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                initialRigZ = rig.getAttribute('position').z;
-            }
-        }, {passive: false});
-
-        document.addEventListener('touchmove', (e) => {
-            if (e.touches.length === 2 && initialPinchDistance) {
-                e.preventDefault(); // デフォルトのズームを防止
-                const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                
-                // ズーム機能修正: 計算を線形にする。指を広げた（current > initial）-> ズームイン（Zを減らす）
-                const delta = currentDistance - initialPinchDistance;
-                const zoomSpeed = 0.05; // ズーム速度調整
-                let newZ = initialRigZ - delta * zoomSpeed;
-
-                // 行き過ぎないように制限 (1m 〜 20mの範囲)
-                newZ = Math.max(1, Math.min(newZ, 20)); 
-                
-                let currentPos = rig.getAttribute('position');
-                rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: newZ});
-            }
-        }, {passive: false});
-
-        document.addEventListener('touchend', () => { initialPinchDistance = null; });
-
         function resetViewpoint() {
-            let currentPos = rig.getAttribute('position');
-            rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: DEFAULT_RIG_Z}); // デフォルト距離に戻す
+            // 位置のリセット（X, Y, Z）
+            rig.object3D.position.set(0, 0, 5);
+            // 回転のリセット
+            if (cameraEl.components['look-controls']) {
+                cameraEl.components['look-controls'].pitchObject.rotation.x = 0;
+                cameraEl.components['look-controls'].yawObject.rotation.y = 0;
+            }
+            cameraEl.object3D.rotation.set(0, 0, 0);
         }
 
         // ==========================================
-        // 6. オプションメニューとUI制御
+        // オプションメニューとUI制御
         // ==========================================
         const optionsModal = document.getElementById('optionsModal');
-        
         document.getElementById('optionsBtn').onclick = () => optionsModal.classList.add('visible');
         document.getElementById('closeOptionsBtn').onclick = () => optionsModal.classList.remove('visible');
 
@@ -277,25 +361,46 @@
             fileSelect.addEventListener('change', (e) => loadWork(parseInt(e.target.value)));
         }
 
+        // NippleJS（ジョイスティック）の初期化
+        function initJoysticks() {
+            if (managerLeft) return; 
+            
+            managerLeft = nipplejs.create({ zone: document.getElementById('joystick-zone-left'), mode: 'dynamic', color: 'white' });
+            managerRight = nipplejs.create({ zone: document.getElementById('joystick-zone-right'), mode: 'dynamic', color: 'white' });
+
+            const joystickComp = sceneEl.components['joystick-controls'];
+
+            managerLeft.on('move', (evt, data) => joystickComp.moveVector.set(data.vector.x, 0, -data.vector.y));
+            managerLeft.on('end', () => joystickComp.moveVector.set(0, 0, 0));
+
+            managerRight.on('move', (evt, data) => joystickComp.lookVector.set(data.vector.x, data.vector.y));
+            managerRight.on('end', () => joystickComp.lookVector.set(0, 0));
+        }
+
         function updateOptionsUI() {
-            // ファイル名表示トグル
-            const nameToggle = document.getElementById('showNameToggle');
-            fileNameDisplay.style.display = nameToggle.checked ? 'block' : 'none';
-            nameToggle.onchange = (e) => {
-                fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
-            };
-
-            // ジャイロオフ問題修正: look-controls の設定をオブジェクト形式にする
-            // ジャイロトグル (magicWindowTrackingEnabled でスマホの傾き検知を制御)
-            const gyroToggle = document.getElementById('gyroToggle');
-            gyroToggle.onchange = (e) => {
-                // オブジェクトとして属性を設定する。iOSの場合、 DeviceOrientation許可が必要になるが、
-                // 今回は permissionUIをオフにしているので、ジャイロが効いていれば適用される。
-                cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: e.target.checked });
-            };
-
-            // 自動切り替えイベント
+            document.getElementById('showNameToggle').onchange = (e) => fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
+            document.getElementById('gyroToggle').onchange = (e) => cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: e.target.checked });
             document.getElementById('autoSwitchSelect').onchange = resetAutoSwitchTimer;
+
+            // 仮想ジョイスティックのON/OFF切り替え
+            document.getElementById('joystickToggle').onchange = (e) => {
+                const isEnabled = e.target.checked;
+                const displayStyle = isEnabled ? 'block' : 'none';
+                
+                document.getElementById('joystick-zone-left').style.display = displayStyle;
+                document.getElementById('joystick-zone-right').style.display = displayStyle;
+                document.getElementById('elevation-controls').style.display = isEnabled ? 'flex' : 'none';
+
+                if (isEnabled) {
+                    initJoysticks();
+                    sceneEl.setAttribute('joystick-controls', 'enabled', true);
+                    // 右スティック（首振り）と競合しないようデフォルトのタッチ視点移動を無効化
+                    cameraEl.setAttribute('look-controls', 'enabled', false); 
+                } else {
+                    sceneEl.setAttribute('joystick-controls', 'enabled', false);
+                    cameraEl.setAttribute('look-controls', 'enabled', true);
+                }
+            };
         }
 
         // 共通ボタン・イベント
