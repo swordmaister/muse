@@ -55,15 +55,22 @@
         AFRAME.registerComponent('quest-controller-actions', {
             init: function () {
                 this.rig = document.getElementById('rig');
-                this.isYUp = false;
-                this.isYDown = false;
-                this.speed = 0.05; // 上下移動のスピード
+                this.isRightUp = false;   // 右手グリップ（上昇）
+                this.isLeftDown = false;  // 左手グリップ（下降）
+                this.speed = 0.05;        // 上下移動のスピード
+                
+                // ジャンプ用変数
+                this.isJumping = false;
+                this.jumpVelocity = 0;
+                this.gravity = 0.008;
+                this.baseY = 0;
 
                 const leftCtrl = document.getElementById('leftController');
+                const rightCtrl = document.getElementById('rightController');
                 const vrMenu = document.getElementById('vrMenu');
 
-                // 左手Xボタン: VRメニューの表示/非表示を切り替え
-                leftCtrl.addEventListener('xbuttondown', () => {
+                // 左手 Yボタン: VRメニューの表示/非表示を切り替え
+                leftCtrl.addEventListener('ybuttondown', () => {
                     if (this.el.sceneEl.is('vr-mode')) {
                         let isVisible = vrMenu.getAttribute('visible');
                         vrMenu.setAttribute('visible', !isVisible);
@@ -72,17 +79,43 @@
                     }
                 });
 
-                // 左手Yボタン: 上昇
-                leftCtrl.addEventListener('ybuttondown', () => { this.isYUp = true; });
-                leftCtrl.addEventListener('ybuttonup', () => { this.isYUp = false; });
+                // 左手 Xボタン: ジャンプ
+                leftCtrl.addEventListener('xbuttondown', () => {
+                    if (!this.isJumping) {
+                        this.baseY = this.rig.object3D.position.y;
+                        this.jumpVelocity = 0.15; // ジャンプの強さ
+                        this.isJumping = true;
+                    }
+                });
 
-                // 左手グリップ: 下降
-                leftCtrl.addEventListener('gripdown', () => { this.isYDown = true; });
-                leftCtrl.addEventListener('gripup', () => { this.isYDown = false; });
+                // 右手 グリップ: 上昇
+                rightCtrl.addEventListener('gripdown', () => { this.isRightUp = true; });
+                rightCtrl.addEventListener('gripup', () => { this.isRightUp = false; });
+
+                // 左手 グリップ: 下降
+                leftCtrl.addEventListener('gripdown', () => { this.isLeftDown = true; });
+                leftCtrl.addEventListener('gripup', () => { this.isLeftDown = false; });
             },
             tick: function () {
-                if (this.isYUp) this.rig.object3D.position.y += this.speed;
-                if (this.isYDown) this.rig.object3D.position.y -= this.speed;
+                // 上昇・下降の処理（ジャンプ中は無効化）
+                if (this.isRightUp && !this.isJumping) {
+                    this.rig.object3D.position.y += this.speed;
+                }
+                if (this.isLeftDown && !this.isJumping) {
+                    this.rig.object3D.position.y -= this.speed;
+                }
+
+                // ジャンプの物理挙動
+                if (this.isJumping) {
+                    this.rig.object3D.position.y += this.jumpVelocity;
+                    this.jumpVelocity -= this.gravity; // 重力をかける
+
+                    // 元の高さに戻ったら着地
+                    if (this.rig.object3D.position.y <= this.baseY) {
+                        this.rig.object3D.position.y = this.baseY;
+                        this.isJumping = false;
+                    }
+                }
             }
         });
 
@@ -312,11 +345,8 @@
 
         async function loadWork(index) {
             currentIndex = index;
-            // 日本語のファイル名だとVR上で文字化けする可能性があるため、ここでは便宜上「Work X」の形式も表示
             const displayName = filesList[index].name;
             fileNameDisplay.textContent = displayName;
-            
-            // A-Frame標準フォント対策（文字化けを防ぐためローマ字やIDなどに置換する運用も検討）
             vrFileNameDisplay.setAttribute('value', "Now Showing: " + displayName); 
             
             fileSelect.value = index;
@@ -377,7 +407,6 @@
         }
 
         function setupVRMenuEvents() {
-            // ホバーアクション (色を変える)
             document.querySelectorAll('.vr-btn').forEach(btn => {
                 btn.addEventListener('mouseenter', function() {
                     this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#E55' : '#666');
@@ -387,12 +416,10 @@
                 });
             });
 
-            // クリックアクション (右手トリガー)
             document.getElementById('vrBtnPrev').addEventListener('click', () => switchWork('prev'));
             document.getElementById('vrBtnNext').addEventListener('click', () => switchWork('next'));
             document.getElementById('vrBtnClose').addEventListener('click', () => document.getElementById('vrMenu').setAttribute('visible', false));
             
-            // 自動切り替え
             document.getElementById('vrBtnAuto').addEventListener('click', function() {
                 vrAutoIndex = (vrAutoIndex + 1) % vrAutoIntervals.length;
                 let val = vrAutoIntervals[vrAutoIndex];
@@ -402,7 +429,6 @@
                 resetAutoSwitchTimer();
             });
 
-            // ファイル名表示
             document.getElementById('vrBtnName').addEventListener('click', function() {
                 let isON = document.getElementById('showNameToggle').checked;
                 toggleFileNameDisplay(!isON);
