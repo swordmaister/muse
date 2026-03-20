@@ -77,13 +77,14 @@
             <input type="checkbox" id="showNameToggle" checked>
         </div>
         <div class="modal-row">
-            <label for="gyroToggle">スマホジャイロ (傾き):</label>
+            <label for="gyroToggle">スマホジャイロ (傾きで上下視点):</label>
             <input type="checkbox" id="gyroToggle" checked>
         </div>
+        <div style="font-size: 0.8rem; color: #aaa; text-align: center;">※ジャイロOFF時、スマホの上下視点移動はできません（AFRAMEの仕様）。タッチ操作は左右のみ効きます。</div>
         <button id="closeOptionsBtn">閉じる</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: hit-test">
+    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false">
         <a-assets id="mainAssets"></a-assets>
 
         <a-sky color="#ECECEC"></a-sky>
@@ -93,8 +94,8 @@
 
         <a-entity id="contentHolder" position="0 0 0"></a-entity>
 
-        <a-entity id="rig" movement-controls="controls: gamepad, keyboard, touch" position="0 0 5">
-            <a-entity id="camera" camera position="0 1.6 0" look-controls="magicWindowTrackingEnabled: true"></a-entity>
+        <a-entity id="rig" movement-controls="controls: gamepad, keyboard" position="0 0 5">
+            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: true; magicWindowTrackingEnabled: true; pointerLockEnabled: false"></a-entity>
             <a-entity oculus-touch-controls="hand: left"></a-entity>
             <a-entity oculus-touch-controls="hand: right" id="rightController"></a-entity>
         </a-entity>
@@ -105,7 +106,7 @@
         
         let filesList = []; 
         let currentIndex = 0;
-        let htmlCache = {}; // バックグラウンド読み込み用キャッシュ
+        let htmlCache = {}; // バックグラウンド読み込み用キャッシュ (DOM Documentをキャッシュ)
         let autoTimer = null; // 自動切り替え用タイマー
 
         const loader = document.getElementById('loadingOverlay');
@@ -114,6 +115,9 @@
         const fileSelect = document.getElementById('fileSelect');
         const rig = document.getElementById('rig');
         const cameraEl = document.getElementById('camera');
+
+        // デフォルトのカメラ距離
+        const DEFAULT_RIG_Z = 5;
 
         // ==========================================
         // 1. 初期化とリスト取得
@@ -126,12 +130,13 @@
                 
                 if (filesList.length > 0) {
                     populateFileList();
-                    await loadWork(0);
+                    // オプションUIの初期状態を設定（イベントリスナー登録）
                     updateOptionsUI();
+                    await loadWork(0);
                 } else {
                     showLoader("ファイルがありません。");
                 }
-            } catch (e) { showLoader("通信エラー"); }
+            } catch (e) { showLoader("通信エラー"); console.error(e); }
         }
 
         // ==========================================
@@ -176,9 +181,12 @@
 
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    while (importedScene.firstChild) {
-                        contentHolder.appendChild(importedScene.firstChild);
-                    }
+                    // 2周目問題修正: elementsを直接appendChildするのではなく、cloneNode(true) で追加する。
+                    // importedScene.children は Live Collection なので Array.from で取得する
+                    const children = Array.from(importedScene.children);
+                    children.forEach(child => {
+                        contentHolder.appendChild(child.cloneNode(true));
+                    });
                 } else {
                     contentHolder.innerHTML = doc.body.innerHTML;
                 }
@@ -204,12 +212,16 @@
             if (autoTimer) clearTimeout(autoTimer);
             const interval = parseInt(document.getElementById('autoSwitchSelect').value);
             if (interval > 0) {
-                autoTimer = setTimeout(() => switchWork('next'), interval);
+                // switchWork('next') ではなく loadWork(next) を呼ぶように調整
+                autoTimer = setTimeout(() => {
+                    let next = (currentIndex + 1) % filesList.length;
+                    loadWork(next);
+                }, interval);
             }
         }
 
         // ==========================================
-        // 5. スマホ用：ピンチ操作による拡大縮小（視点の接近/離脱）
+        // 5. スマホ用：ピンチ操作によるズーム（視点の接近/離脱）
         // ==========================================
         let initialPinchDistance = null;
         let initialRigZ = null;
@@ -225,9 +237,12 @@
             if (e.touches.length === 2 && initialPinchDistance) {
                 e.preventDefault(); // デフォルトのズームを防止
                 const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                const zoomRatio = initialPinchDistance / currentDistance; // 広げると小さくなる（近づく）
                 
-                let newZ = initialRigZ * zoomRatio;
+                // ズーム機能修正: 計算を線形にする。指を広げた（current > initial）-> ズームイン（Zを減らす）
+                const delta = currentDistance - initialPinchDistance;
+                const zoomSpeed = 0.05; // ズーム速度調整
+                let newZ = initialRigZ - delta * zoomSpeed;
+
                 // 行き過ぎないように制限 (1m 〜 20mの範囲)
                 newZ = Math.max(1, Math.min(newZ, 20)); 
                 
@@ -240,7 +255,7 @@
 
         function resetViewpoint() {
             let currentPos = rig.getAttribute('position');
-            rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: 5}); // デフォルト距離に戻す
+            rig.setAttribute('position', {x: currentPos.x, y: currentPos.y, z: DEFAULT_RIG_Z}); // デフォルト距離に戻す
         }
 
         // ==========================================
@@ -266,18 +281,21 @@
             // ファイル名表示トグル
             const nameToggle = document.getElementById('showNameToggle');
             fileNameDisplay.style.display = nameToggle.checked ? 'block' : 'none';
-            nameToggle.addEventListener('change', (e) => {
+            nameToggle.onchange = (e) => {
                 fileNameDisplay.style.display = e.target.checked ? 'block' : 'none';
-            });
+            };
 
+            // ジャイロオフ問題修正: look-controls の設定をオブジェクト形式にする
             // ジャイロトグル (magicWindowTrackingEnabled でスマホの傾き検知を制御)
             const gyroToggle = document.getElementById('gyroToggle');
-            gyroToggle.addEventListener('change', (e) => {
-                cameraEl.setAttribute('look-controls', `magicWindowTrackingEnabled: ${e.target.checked}`);
-            });
+            gyroToggle.onchange = (e) => {
+                // オブジェクトとして属性を設定する。iOSの場合、 DeviceOrientation許可が必要になるが、
+                // 今回は permissionUIをオフにしているので、ジャイロが効いていれば適用される。
+                cameraEl.setAttribute('look-controls', { magicWindowTrackingEnabled: e.target.checked });
+            };
 
             // 自動切り替えイベント
-            document.getElementById('autoSwitchSelect').addEventListener('change', resetAutoSwitchTimer);
+            document.getElementById('autoSwitchSelect').onchange = resetAutoSwitchTimer;
         }
 
         // 共通ボタン・イベント
