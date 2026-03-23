@@ -179,7 +179,7 @@
             }
         });
 
-        // 3. UIボタンによるXYZ移動
+        // 3. UIボタンによるXYZ移動（修正版：フラグ管理）
         AFRAME.registerComponent('dpad-movement', {
             schema: { enabled: {default: false} },
             init: function () {
@@ -188,11 +188,28 @@
                 this.moveVector = new THREE.Vector3(0,0,0);
                 this.speed = 0.08;
 
-                const bindBtn = (id, vec) => {
+                // 各ボタンの押下状態を管理するオブジェクト
+                this.btnStates = {
+                    'btn-fwd': false,
+                    'btn-back': false,
+                    'btn-left': false,
+                    'btn-right': false,
+                    'btn-up': false,
+                    'btn-down': false
+                };
+
+                const bindBtn = (id) => {
                     const btn = document.getElementById(id);
                     if(!btn) return;
-                    const press = (e) => { e.preventDefault(); this.moveVector.add(vec); };
-                    const release = (e) => { e.preventDefault(); this.moveVector.sub(vec); };
+                    const press = (e) => { 
+                        if (e.cancelable) e.preventDefault(); 
+                        this.btnStates[id] = true; 
+                    };
+                    const release = (e) => { 
+                        if (e.cancelable) e.preventDefault(); 
+                        this.btnStates[id] = false; 
+                    };
+                    
                     btn.addEventListener('touchstart', press, {passive: false});
                     btn.addEventListener('touchend', release, {passive: false});
                     btn.addEventListener('mousedown', press);
@@ -200,18 +217,31 @@
                     btn.addEventListener('mouseleave', release);
                 };
 
-                bindBtn('btn-fwd', new THREE.Vector3(0,0,-1));
-                bindBtn('btn-back', new THREE.Vector3(0,0,1));
-                bindBtn('btn-left', new THREE.Vector3(-1,0,0));
-                bindBtn('btn-right', new THREE.Vector3(1,0,0));
-                bindBtn('btn-up', new THREE.Vector3(0,1,0));
-                bindBtn('btn-down', new THREE.Vector3(0,-1,0));
+                bindBtn('btn-fwd');
+                bindBtn('btn-back');
+                bindBtn('btn-left');
+                bindBtn('btn-right');
+                bindBtn('btn-up');
+                bindBtn('btn-down');
             },
             tick: function () {
-                if (!this.data.enabled || this.moveVector.lengthSq() === 0) return;
+                if (!this.data.enabled) return;
+
+                // 毎フレームベクトルをリセットして再計算
+                this.moveVector.set(0, 0, 0);
+                if (this.btnStates['btn-fwd']) this.moveVector.z -= 1;
+                if (this.btnStates['btn-back']) this.moveVector.z += 1;
+                if (this.btnStates['btn-left']) this.moveVector.x -= 1;
+                if (this.btnStates['btn-right']) this.moveVector.x += 1;
+                if (this.btnStates['btn-up']) this.moveVector.y += 1;
+                if (this.btnStates['btn-down']) this.moveVector.y -= 1;
+
+                if (this.moveVector.lengthSq() === 0) return;
+
                 let yRot = this.camera.object3D.rotation.y;
                 let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
                 let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
+                
                 this.rig.object3D.position.x += moveX * this.speed;
                 this.rig.object3D.position.z += moveZ * this.speed;
                 this.rig.object3D.position.y += this.moveVector.y * this.speed;
