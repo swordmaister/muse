@@ -21,7 +21,9 @@
         /* スマホ/PC用 2D UI */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
         .base-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-        #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: none; }
+        
+        /* デフォルトで表示 (block) に変更 */
+        #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: block; }
         #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
 
         /* オプションモーダル (2D用) */
@@ -34,8 +36,8 @@
         .modal-row label { font-size: 1rem; }
         .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
 
-        /* カスタム十字キー UI (スマホ移動用) */
-        #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: none; justify-content: space-between; pointer-events: none; }
+        /* カスタム十字キー UI (スマホ移動用) - デフォルトで表示 (flex) に変更 */
+        #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: flex; justify-content: space-between; pointer-events: none; }
         #dpad-container { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 5px; pointer-events: auto; }
         .dpad-btn { width: 100%; height: 100%; border-radius: 10px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
         .dpad-btn:active { background: rgba(255,255,255,0.8); }
@@ -55,11 +57,10 @@
         AFRAME.registerComponent('quest-controller-actions', {
             init: function () {
                 this.rig = document.getElementById('rig');
-                this.isRightUp = false;   // 右手グリップ（上昇）
-                this.isLeftDown = false;  // 左手グリップ（下降）
-                this.speed = 0.05;        // 上下移動のスピード
+                this.isRightUp = false;
+                this.isLeftDown = false;
+                this.speed = 0.05;
                 
-                // ジャンプ用変数
                 this.isJumping = false;
                 this.jumpVelocity = 0;
                 this.gravity = 0.008;
@@ -69,7 +70,6 @@
                 const rightCtrl = document.getElementById('rightController');
                 const vrMenu = document.getElementById('vrMenu');
 
-                // 左手 Yボタン: VRメニューの表示/非表示を切り替え
                 leftCtrl.addEventListener('ybuttondown', () => {
                     if (this.el.sceneEl.is('vr-mode')) {
                         let isVisible = vrMenu.getAttribute('visible');
@@ -79,25 +79,21 @@
                     }
                 });
 
-                // 左手 Xボタン: ジャンプ
                 leftCtrl.addEventListener('xbuttondown', () => {
                     if (!this.isJumping) {
                         this.baseY = this.rig.object3D.position.y;
-                        this.jumpVelocity = 0.15; // ジャンプの強さ
+                        this.jumpVelocity = 0.15;
                         this.isJumping = true;
                     }
                 });
 
-                // 右手 グリップ: 上昇
                 rightCtrl.addEventListener('gripdown', () => { this.isRightUp = true; });
                 rightCtrl.addEventListener('gripup', () => { this.isRightUp = false; });
 
-                // 左手 グリップ: 下降
                 leftCtrl.addEventListener('gripdown', () => { this.isLeftDown = true; });
                 leftCtrl.addEventListener('gripup', () => { this.isLeftDown = false; });
             },
             tick: function () {
-                // 上昇・下降の処理（ジャンプ中は無効化）
                 if (this.isRightUp && !this.isJumping) {
                     this.rig.object3D.position.y += this.speed;
                 }
@@ -105,12 +101,10 @@
                     this.rig.object3D.position.y -= this.speed;
                 }
 
-                // ジャンプの物理挙動
                 if (this.isJumping) {
                     this.rig.object3D.position.y += this.jumpVelocity;
-                    this.jumpVelocity -= this.gravity; // 重力をかける
+                    this.jumpVelocity -= this.gravity;
 
-                    // 元の高さに戻ったら着地
                     if (this.rig.object3D.position.y <= this.baseY) {
                         this.rig.object3D.position.y = this.baseY;
                         this.isJumping = false;
@@ -119,7 +113,7 @@
             }
         });
 
-        // 1. ピンチズーム（接近・離脱）
+        // 1. ピンチズーム
         AFRAME.registerComponent('pinch-zoom', {
             init: function () {
                 this.initialDistance = 0;
@@ -179,7 +173,7 @@
             }
         });
 
-        // 3. UIボタンによるXYZ移動（修正版：フラグ管理）
+        // 3. UIボタンによるXYZ移動
         AFRAME.registerComponent('dpad-movement', {
             schema: { enabled: {default: false} },
             init: function () {
@@ -188,7 +182,6 @@
                 this.moveVector = new THREE.Vector3(0,0,0);
                 this.speed = 0.08;
 
-                // 各ボタンの押下状態を管理するオブジェクト
                 this.btnStates = {
                     'btn-fwd': false,
                     'btn-back': false,
@@ -227,7 +220,6 @@
             tick: function () {
                 if (!this.data.enabled) return;
 
-                // 毎フレームベクトルをリセットして再計算
                 this.moveVector.set(0, 0, 0);
                 if (this.btnStates['btn-fwd']) this.moveVector.z -= 1;
                 if (this.btnStates['btn-back']) this.moveVector.z += 1;
@@ -252,7 +244,7 @@
 <body>
 
     <div id="loadingOverlay"><h2 id="loadingMsg">読込中...</h2></div>
-    <div id="fileNameDisplay">ファイル名</div>
+    <div id="fileNameDisplay"></div>
     <button id="optionsBtn" class="base-btn">⚙️ 設定</button>
 
     <div class="ui-container">
@@ -281,12 +273,12 @@
             <select id="autoSwitchSelect"><option value="0">オフ</option><option value="5000">5秒</option><option value="10000">10秒</option><option value="30000">30秒</option></select>
         </div>
         <div class="modal-row"><label for="showNameToggle">ファイル名表示:</label><input type="checkbox" id="showNameToggle" checked></div>
-        <div class="modal-row"><label for="gyroToggle">スマホジャイロ (傾き):</label><input type="checkbox" id="gyroToggle" checked></div>
-        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;"><label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label><input type="checkbox" id="movementToggle"></div>
+        <div class="modal-row"><label for="gyroToggle">スマホジャイロ (傾き):</label><input type="checkbox" id="gyroToggle"></div>
+        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;"><label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label><input type="checkbox" id="movementToggle" checked></div>
         <button id="closeOptionsBtn" class="base-btn" style="background: #ff4757; color: #fff; margin-top: 10px;">閉じる</button>
     </div>
 
-    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: false" dpad-movement="enabled: false" quest-controller-actions>
+    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: true" dpad-movement="enabled: true" quest-controller-actions>
         <a-assets id="mainAssets"></a-assets>
 
         <a-sky color="#ECECEC" id="baseSky"></a-sky>
@@ -297,8 +289,8 @@
         <a-entity id="contentHolder" position="0 0 0"></a-entity>
 
         <a-entity id="rig" movement-controls="controls: gamepad, keyboard" position="0 0 5">
-            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: true; magicWindowTrackingEnabled: true; pointerLockEnabled: false">
-                <a-text id="vrFileNameDisplay" value="Loading..." position="0 0.6 -1.5" align="center" width="2" color="#333" visible="true"></a-text>
+            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: false; magicWindowTrackingEnabled: false; pointerLockEnabled: false">
+                <a-text id="vrFileNameDisplay" value="" position="0 0.6 -1.5" align="center" width="2" color="#333" visible="true"></a-text>
             </a-entity>
 
             <a-entity id="leftController" oculus-touch-controls="hand: left">
@@ -340,7 +332,6 @@
         const cameraEl = document.getElementById('camera');
         const sceneEl = document.querySelector('a-scene');
 
-        // システム初期化
         async function init() {
             setupVRMenuEvents();
             try {
@@ -376,11 +367,13 @@
         async function loadWork(index) {
             currentIndex = index;
             const displayName = filesList[index].name;
+            
+            // "Now Showing:" を削除し、純粋なファイル名のみを代入
             fileNameDisplay.textContent = displayName;
-            vrFileNameDisplay.setAttribute('value', "Now Showing: " + displayName); 
+            vrFileNameDisplay.setAttribute('value', displayName); 
             
             fileSelect.value = index;
-            if (!htmlCache[index]) showLoader(`作品 ${displayName} を読み込み中...`);
+            if (!htmlCache[index]) showLoader(`読み込み中...`); 
 
             try {
                 const doc = await fetchWorkData(index);
@@ -498,6 +491,9 @@
                 document.getElementById('movement-ui').style.display = isEnabled ? 'flex' : 'none';
                 sceneEl.setAttribute('dpad-movement', 'enabled', isEnabled);
             };
+            
+            // 初回のUI状態を強制的に同期
+            toggleFileNameDisplay(document.getElementById('showNameToggle').checked);
         }
 
         document.getElementById('rightController').addEventListener('abuttondown', () => switchWork('next'));
