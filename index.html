@@ -52,6 +52,17 @@
 
     <script>
         // ==========================================
+        // 【重要】コンポーネントの重複登録エラーを回避するパッチ
+        // ==========================================
+        const originalRegisterComponent = AFRAME.registerComponent;
+        AFRAME.registerComponent = function (name, definition) {
+            if (AFRAME.components[name]) {
+                delete AFRAME.components[name]; // 既に存在する場合は一旦削除して上書き
+            }
+            return originalRegisterComponent.call(this, name, definition);
+        };
+
+        // ==========================================
         // Quest2 コントローラー用アクション
         // ==========================================
         AFRAME.registerComponent('quest-controller-actions', {
@@ -281,10 +292,11 @@
     <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: true" dpad-movement="enabled: true" quest-controller-actions>
         <a-assets id="mainAssets"></a-assets>
 
+        <!-- 元のデフォルト背景と地面 -->
         <a-sky color="#ECECEC" id="baseSky"></a-sky>
         <a-plane id="basePlane" position="0 -0.01 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
-        <a-entity light="type: ambient; color: #BBB"></a-entity>
-        <a-entity light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
+        <a-entity id="baseAmbientLight" light="type: ambient; color: #BBB"></a-entity>
+        <a-entity id="baseDirLight" light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
 
         <a-entity id="contentHolder" position="0 0 0"></a-entity>
 
@@ -364,11 +376,13 @@
             fetchWorkData(nextIndex).catch(e => console.error(e));
         }
 
+        // ==========================================
+        // 【改修版】外部作品を安全に読み込むコア関数
+        // ==========================================
         async function loadWork(index) {
             currentIndex = index;
             const displayName = filesList[index].name;
             
-            // "Now Showing:" を削除し、純粋なファイル名のみを代入
             fileNameDisplay.textContent = displayName;
             vrFileNameDisplay.setAttribute('value', displayName); 
             
@@ -377,17 +391,59 @@
 
             try {
                 const doc = await fetchWorkData(index);
-                contentHolder.innerHTML = ''; 
+                
+                // 1. 古い要素を「正しく」削除し、remove() ライフサイクルを発火させる（メモリリーク防止）
+                while (contentHolder.firstChild) {
+                    contentHolder.removeChild(contentHolder.firstChild);
+                }
+
+                // 2. 外部ファイルの <script> を抽出してブラウザ上で実行する
+                const scripts = doc.querySelectorAll('script');
+                scripts.forEach(script => {
+                    // aframe自体などのライブラリは二重読み込み防止のためスキップ
+                    if (script.src && (script.src.includes('aframe') || script.src.includes('three'))) return;
+                    
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.body.appendChild(newScript);
+                });
+
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    const duplicates = importedScene.querySelectorAll('a-sky, a-camera, [camera]');
+                    // 3. 外部ファイル側の a-scene 属性（霧・影・レンダラー設定など）をビュワーのシーンにコピーする
+                    const attrsToCopy = ['fog', 'background', 'environment', 'renderer', 'shadow'];
+                    attrsToCopy.forEach(attr => {
+                        if (importedScene.hasAttribute(attr)) {
+                            sceneEl.setAttribute(attr, importedScene.getAttribute(attr));
+                        } else {
+                            sceneEl.removeAttribute(attr);
+                        }
+                    });
+
+                    // 4. 外部ファイル内に含まれる不要なカメラや重複要素を削除
+                    const duplicates = importedScene.querySelectorAll('a-sky, a-camera, [camera], #rig');
                     duplicates.forEach(el => el.remove());
+
+                    // 外部ファイルの世界観を壊さないように、親側のデフォルトSky等を非表示にする設定（任意）
+                    document.getElementById('baseSky').setAttribute('visible', !importedScene.hasAttribute('fog') && !importedScene.hasAttribute('background'));
+                    document.getElementById('basePlane').setAttribute('visible', !importedScene.hasAttribute('fog') && !importedScene.hasAttribute('background'));
+
+                    // 5. 構築された要素をビュワー内に注入
                     const children = Array.from(importedScene.children);
-                    children.forEach(child => contentHolder.appendChild(child.cloneNode(true)));
+                    children.forEach(child => {
+                        contentHolder.appendChild(child.cloneNode(true));
+                    });
                 } else {
+                    // a-sceneが存在しない通常のHTMLだった場合のフォールバック
                     contentHolder.innerHTML = doc.body.innerHTML;
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { 
+                console.error("読み込みエラー:", e); 
+            }
 
             hideLoader();
             resetViewpoint(); 
@@ -492,7 +548,6 @@
                 sceneEl.setAttribute('dpad-movement', 'enabled', isEnabled);
             };
             
-            // 初回のUI状態を強制的に同期
             toggleFileNameDisplay(document.getElementById('showNameToggle').checked);
         }
 
