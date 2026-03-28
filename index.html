@@ -10,7 +10,6 @@
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; user-select: none; }
         
-        /* ローディング画面 */
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999;
@@ -18,15 +17,12 @@
         }
         #loadingOverlay.visible { opacity: 1; pointer-events: auto; }
         
-        /* スマホ/PC用 2D UI */
         .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
         .base-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         
-        /* デフォルトで表示 (block) に変更 */
         #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: block; }
         #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
 
-        /* オプションモーダル (2D用) */
         #optionsModal {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: rgba(30, 30, 30, 0.95); padding: 25px; border-radius: 10px; z-index: 10000; display: none; flex-direction: column; gap: 15px; width: 80%; max-width: 400px; box-shadow: 0 5px 15px rgba(0,0,0,0.5);
@@ -36,7 +32,6 @@
         .modal-row label { font-size: 1rem; }
         .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
 
-        /* カスタム十字キー UI (スマホ移動用) - デフォルトで表示 (flex) に変更 */
         #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: flex; justify-content: space-between; pointer-events: none; }
         #dpad-container { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 5px; pointer-events: auto; }
         .dpad-btn { width: 100%; height: 100%; border-radius: 10px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
@@ -51,132 +46,69 @@
     </style>
 
     <script>
-        // ==========================================
-        // 【重要】コンポーネントの重複登録エラーを回避するパッチ
-        // ==========================================
+        // コンポーネント重複エラー回避
         const originalRegisterComponent = AFRAME.registerComponent;
         AFRAME.registerComponent = function (name, definition) {
-            if (AFRAME.components[name]) {
-                delete AFRAME.components[name]; // 既に存在する場合は一旦削除して上書き
-            }
+            if (AFRAME.components[name]) delete AFRAME.components[name];
             return originalRegisterComponent.call(this, name, definition);
         };
 
-        // ==========================================
-        // Quest2 コントローラー用アクション
-        // ==========================================
+        // コントローラー・操作系コンポーネント (変更なし)
         AFRAME.registerComponent('quest-controller-actions', {
             init: function () {
                 this.rig = document.getElementById('rig');
-                this.isRightUp = false;
-                this.isLeftDown = false;
-                this.speed = 0.05;
-                
-                this.isJumping = false;
-                this.jumpVelocity = 0;
-                this.gravity = 0.008;
-                this.baseY = 0;
-
-                const leftCtrl = document.getElementById('leftController');
-                const rightCtrl = document.getElementById('rightController');
-                const vrMenu = document.getElementById('vrMenu');
-
+                this.isRightUp = false; this.isLeftDown = false; this.speed = 0.05;
+                this.isJumping = false; this.jumpVelocity = 0; this.gravity = 0.008; this.baseY = 0;
+                const leftCtrl = document.getElementById('leftController'), rightCtrl = document.getElementById('rightController'), vrMenu = document.getElementById('vrMenu');
                 leftCtrl.addEventListener('ybuttondown', () => {
-                    if (this.el.sceneEl.is('vr-mode')) {
-                        let isVisible = vrMenu.getAttribute('visible');
-                        vrMenu.setAttribute('visible', !isVisible);
-                    } else {
-                        document.getElementById('optionsModal').classList.add('visible');
-                    }
+                    if (this.el.sceneEl.is('vr-mode')) vrMenu.setAttribute('visible', !vrMenu.getAttribute('visible'));
+                    else document.getElementById('optionsModal').classList.add('visible');
                 });
-
                 leftCtrl.addEventListener('xbuttondown', () => {
-                    if (!this.isJumping) {
-                        this.baseY = this.rig.object3D.position.y;
-                        this.jumpVelocity = 0.15;
-                        this.isJumping = true;
-                    }
+                    if (!this.isJumping) { this.baseY = this.rig.object3D.position.y; this.jumpVelocity = 0.15; this.isJumping = true; }
                 });
-
-                rightCtrl.addEventListener('gripdown', () => { this.isRightUp = true; });
-                rightCtrl.addEventListener('gripup', () => { this.isRightUp = false; });
-
-                leftCtrl.addEventListener('gripdown', () => { this.isLeftDown = true; });
-                leftCtrl.addEventListener('gripup', () => { this.isLeftDown = false; });
+                rightCtrl.addEventListener('gripdown', () => { this.isRightUp = true; }); rightCtrl.addEventListener('gripup', () => { this.isRightUp = false; });
+                leftCtrl.addEventListener('gripdown', () => { this.isLeftDown = true; }); leftCtrl.addEventListener('gripup', () => { this.isLeftDown = false; });
             },
             tick: function () {
-                if (this.isRightUp && !this.isJumping) {
-                    this.rig.object3D.position.y += this.speed;
-                }
-                if (this.isLeftDown && !this.isJumping) {
-                    this.rig.object3D.position.y -= this.speed;
-                }
-
+                if (this.isRightUp && !this.isJumping) this.rig.object3D.position.y += this.speed;
+                if (this.isLeftDown && !this.isJumping) this.rig.object3D.position.y -= this.speed;
                 if (this.isJumping) {
-                    this.rig.object3D.position.y += this.jumpVelocity;
-                    this.jumpVelocity -= this.gravity;
-
-                    if (this.rig.object3D.position.y <= this.baseY) {
-                        this.rig.object3D.position.y = this.baseY;
-                        this.isJumping = false;
-                    }
+                    this.rig.object3D.position.y += this.jumpVelocity; this.jumpVelocity -= this.gravity;
+                    if (this.rig.object3D.position.y <= this.baseY) { this.rig.object3D.position.y = this.baseY; this.isJumping = false; }
                 }
             }
         });
 
-        // 1. ピンチズーム
         AFRAME.registerComponent('pinch-zoom', {
             init: function () {
-                this.initialDistance = 0;
-                this.initialZ = 0;
-                this.rig = document.getElementById('rig');
+                this.initialDistance = 0; this.initialZ = 0; this.rig = document.getElementById('rig');
                 this.el.sceneEl.canvas.addEventListener('touchstart', (e) => {
-                    if (e.touches.length === 2) {
-                        this.initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                        this.initialZ = this.rig.object3D.position.z;
-                    }
+                    if (e.touches.length === 2) { this.initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); this.initialZ = this.rig.object3D.position.z; }
                 }, {passive: false});
                 this.el.sceneEl.canvas.addEventListener('touchmove', (e) => {
                     if (e.touches.length === 2 && this.initialDistance) {
                         e.preventDefault();
                         const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                        const delta = currentDistance - this.initialDistance;
-                        let newZ = this.initialZ - delta * 0.02; 
-                        this.rig.object3D.position.z = Math.max(0.5, Math.min(newZ, 30));
+                        this.rig.object3D.position.z = Math.max(0.5, Math.min(this.initialZ - (currentDistance - this.initialDistance) * 0.02, 30));
                     }
                 }, {passive: false});
                 this.el.sceneEl.canvas.addEventListener('touchend', () => { this.initialDistance = 0; });
             }
         });
 
-        // 2. スマホ1本指スワイプでの首振り
         AFRAME.registerComponent('custom-touch-look', {
             schema: { enabled: {default: false} },
             init: function () {
-                this.pitch = 0;
-                this.yaw = 0;
-                this.isDragging = false;
-                this.lastPos = {x: 0, y: 0};
-                this.camera = document.getElementById('camera');
+                this.pitch = 0; this.yaw = 0; this.isDragging = false; this.lastPos = {x: 0, y: 0}; this.camera = document.getElementById('camera');
                 const canvas = this.el.sceneEl.canvas;
-
-                canvas.addEventListener('touchstart', (e) => {
-                    if (e.touches.length === 1 && this.data.enabled) {
-                        this.isDragging = true;
-                        this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY };
-                    }
-                }, {passive: false});
-
+                canvas.addEventListener('touchstart', (e) => { if (e.touches.length === 1 && this.data.enabled) { this.isDragging = true; this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY }; } }, {passive: false});
                 canvas.addEventListener('touchmove', (e) => {
                     if (this.isDragging && e.touches.length === 1 && this.data.enabled) {
                         e.preventDefault();
-                        let deltaX = e.touches[0].pageX - this.lastPos.x;
-                        let deltaY = e.touches[0].pageY - this.lastPos.y;
+                        this.yaw -= (e.touches[0].pageX - this.lastPos.x) * 0.005;
+                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch - (e.touches[0].pageY - this.lastPos.y) * 0.005)); 
                         this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY };
-
-                        this.yaw -= deltaX * 0.005;
-                        this.pitch -= deltaY * 0.005;
-                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch)); 
                         this.camera.object3D.rotation.set(this.pitch, this.yaw, 0);
                     }
                 }, {passive: false});
@@ -184,69 +116,30 @@
             }
         });
 
-        // 3. UIボタンによるXYZ移動
         AFRAME.registerComponent('dpad-movement', {
             schema: { enabled: {default: false} },
             init: function () {
-                this.rig = document.getElementById('rig');
-                this.camera = document.getElementById('camera');
-                this.moveVector = new THREE.Vector3(0,0,0);
-                this.speed = 0.08;
-
-                this.btnStates = {
-                    'btn-fwd': false,
-                    'btn-back': false,
-                    'btn-left': false,
-                    'btn-right': false,
-                    'btn-up': false,
-                    'btn-down': false
-                };
-
+                this.rig = document.getElementById('rig'); this.camera = document.getElementById('camera'); this.moveVector = new THREE.Vector3(0,0,0); this.speed = 0.08;
+                this.btnStates = { 'btn-fwd': false, 'btn-back': false, 'btn-left': false, 'btn-right': false, 'btn-up': false, 'btn-down': false };
                 const bindBtn = (id) => {
-                    const btn = document.getElementById(id);
-                    if(!btn) return;
-                    const press = (e) => { 
-                        if (e.cancelable) e.preventDefault(); 
-                        this.btnStates[id] = true; 
-                    };
-                    const release = (e) => { 
-                        if (e.cancelable) e.preventDefault(); 
-                        this.btnStates[id] = false; 
-                    };
-                    
-                    btn.addEventListener('touchstart', press, {passive: false});
-                    btn.addEventListener('touchend', release, {passive: false});
-                    btn.addEventListener('mousedown', press);
-                    btn.addEventListener('mouseup', release);
-                    btn.addEventListener('mouseleave', release);
+                    const btn = document.getElementById(id); if(!btn) return;
+                    const press = (e) => { if (e.cancelable) e.preventDefault(); this.btnStates[id] = true; };
+                    const release = (e) => { if (e.cancelable) e.preventDefault(); this.btnStates[id] = false; };
+                    btn.addEventListener('touchstart', press, {passive: false}); btn.addEventListener('touchend', release, {passive: false});
+                    btn.addEventListener('mousedown', press); btn.addEventListener('mouseup', release); btn.addEventListener('mouseleave', release);
                 };
-
-                bindBtn('btn-fwd');
-                bindBtn('btn-back');
-                bindBtn('btn-left');
-                bindBtn('btn-right');
-                bindBtn('btn-up');
-                bindBtn('btn-down');
+                ['btn-fwd', 'btn-back', 'btn-left', 'btn-right', 'btn-up', 'btn-down'].forEach(bindBtn);
             },
             tick: function () {
                 if (!this.data.enabled) return;
-
                 this.moveVector.set(0, 0, 0);
-                if (this.btnStates['btn-fwd']) this.moveVector.z -= 1;
-                if (this.btnStates['btn-back']) this.moveVector.z += 1;
-                if (this.btnStates['btn-left']) this.moveVector.x -= 1;
-                if (this.btnStates['btn-right']) this.moveVector.x += 1;
-                if (this.btnStates['btn-up']) this.moveVector.y += 1;
-                if (this.btnStates['btn-down']) this.moveVector.y -= 1;
-
+                if (this.btnStates['btn-fwd']) this.moveVector.z -= 1; if (this.btnStates['btn-back']) this.moveVector.z += 1;
+                if (this.btnStates['btn-left']) this.moveVector.x -= 1; if (this.btnStates['btn-right']) this.moveVector.x += 1;
+                if (this.btnStates['btn-up']) this.moveVector.y += 1; if (this.btnStates['btn-down']) this.moveVector.y -= 1;
                 if (this.moveVector.lengthSq() === 0) return;
-
                 let yRot = this.camera.object3D.rotation.y;
-                let moveX = this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot);
-                let moveZ = -this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot);
-                
-                this.rig.object3D.position.x += moveX * this.speed;
-                this.rig.object3D.position.z += moveZ * this.speed;
+                this.rig.object3D.position.x += (this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot)) * this.speed;
+                this.rig.object3D.position.z += (-this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot)) * this.speed;
                 this.rig.object3D.position.y += this.moveVector.y * this.speed;
             }
         });
@@ -265,15 +158,9 @@
 
     <div id="movement-ui">
         <div id="dpad-container">
-            <div id="btn-fwd" class="dpad-btn">W</div>
-            <div id="btn-left" class="dpad-btn">A</div>
-            <div id="btn-right" class="dpad-btn">D</div>
-            <div id="btn-back" class="dpad-btn">S</div>
+            <div id="btn-fwd" class="dpad-btn">W</div><div id="btn-left" class="dpad-btn">A</div><div id="btn-right" class="dpad-btn">D</div><div id="btn-back" class="dpad-btn">S</div>
         </div>
-        <div id="y-container">
-            <div id="btn-up" class="y-btn">▲</div>
-            <div id="btn-down" class="y-btn">▼</div>
-        </div>
+        <div id="y-container"><div id="btn-up" class="y-btn">▲</div><div id="btn-down" class="y-btn">▼</div></div>
     </div>
 
     <div id="optionsModal">
@@ -292,7 +179,6 @@
     <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: true" dpad-movement="enabled: true" quest-controller-actions>
         <a-assets id="mainAssets"></a-assets>
 
-        <!-- 元のデフォルト背景と地面 -->
         <a-sky color="#ECECEC" id="baseSky"></a-sky>
         <a-plane id="basePlane" position="0 -0.01 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
         <a-entity id="baseAmbientLight" light="type: ambient; color: #BBB"></a-entity>
@@ -304,23 +190,17 @@
             <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: false; magicWindowTrackingEnabled: false; pointerLockEnabled: false">
                 <a-text id="vrFileNameDisplay" value="" position="0 0.6 -1.5" align="center" width="2" color="#333" visible="true"></a-text>
             </a-entity>
-
             <a-entity id="leftController" oculus-touch-controls="hand: left">
                 <a-entity id="vrMenu" visible="false" position="0 0.15 -0.05" rotation="-45 0 0">
                     <a-plane width="0.35" height="0.35" color="#111" opacity="0.95" border-radius="0.05"></a-plane>
                     <a-text value="VR Options Menu" position="0 0.14 0.01" align="center" width="0.8" color="#7BC8A4"></a-text>
-
                     <a-entity class="vr-btn" id="vrBtnPrev" position="-0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: < Prev; align: center; width: 0.6"></a-entity>
                     <a-entity class="vr-btn" id="vrBtnNext" position="0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: Next >; align: center; width: 0.6"></a-entity>
-                    
                     <a-entity class="vr-btn" id="vrBtnAuto" position="0 0.0 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: Auto Switch: OFF; align: center; width: 0.6"></a-entity>
-                    
                     <a-entity class="vr-btn" id="vrBtnName" position="0 -0.07 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: File Name: ON; align: center; width: 0.6"></a-entity>
-                    
                     <a-entity class="vr-btn" id="vrBtnClose" position="0 -0.14 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #A33" text="value: Close Menu; align: center; width: 0.6"></a-entity>
                 </a-entity>
             </a-entity>
-
             <a-entity id="rightController" oculus-touch-controls="hand: right" raycaster="objects: .vr-btn; showLine: true; far: 2" cursor="rayOrigin: entity"></a-entity>
         </a-entity>
     </a-scene>
@@ -334,15 +214,12 @@
         let autoTimer = null; 
         let vrAutoIntervals = [0, 5000, 10000, 30000];
         let vrAutoIndex = 0;
+        let currentLoadId = 0; // ★ 追加：非同期ロードの競合防止用ID
 
-        const loader = document.getElementById('loadingOverlay');
-        const contentHolder = document.getElementById('contentHolder');
-        const fileNameDisplay = document.getElementById('fileNameDisplay');
-        const vrFileNameDisplay = document.getElementById('vrFileNameDisplay');
-        const fileSelect = document.getElementById('fileSelect');
-        const rig = document.getElementById('rig');
-        const cameraEl = document.getElementById('camera');
-        const sceneEl = document.querySelector('a-scene');
+        const loader = document.getElementById('loadingOverlay'), contentHolder = document.getElementById('contentHolder');
+        const fileNameDisplay = document.getElementById('fileNameDisplay'), vrFileNameDisplay = document.getElementById('vrFileNameDisplay');
+        const fileSelect = document.getElementById('fileSelect'), rig = document.getElementById('rig');
+        const cameraEl = document.getElementById('camera'), sceneEl = document.querySelector('a-scene');
 
         async function init() {
             setupVRMenuEvents();
@@ -350,14 +227,8 @@
                 showLoader("リスト取得中...");
                 const response = await fetch(GAS_WEB_APP_URL);
                 filesList = await response.json();
-                
-                if (filesList.length > 0) {
-                    populateFileList();
-                    updateOptionsUI();
-                    await loadWork(0);
-                } else {
-                    showLoader("ファイルがありません。");
-                }
+                if (filesList.length > 0) { populateFileList(); updateOptionsUI(); await loadWork(0); } 
+                else { showLoader("ファイルがありません。"); }
             } catch (e) { showLoader("通信エラー"); console.error(e); }
         }
 
@@ -365,92 +236,92 @@
             if (htmlCache[index]) return htmlCache[index];
             const response = await fetch(`${GAS_WEB_APP_URL}?fileId=${filesList[index].id}`);
             const htmlText = await response.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(htmlText, 'text/html');
-            htmlCache[index] = doc;
-            return doc;
+            htmlCache[index] = new DOMParser().parseFromString(htmlText, 'text/html');
+            return htmlCache[index];
         }
 
-        function preloadNextWork() {
-            let nextIndex = (currentIndex + 1) % filesList.length;
-            fetchWorkData(nextIndex).catch(e => console.error(e));
-        }
+        function preloadNextWork() { fetchWorkData((currentIndex + 1) % filesList.length).catch(e => console.error(e)); }
 
         // ==========================================
         // 【改修版】外部作品を安全に読み込むコア関数
         // ==========================================
         async function loadWork(index) {
+            const loadId = ++currentLoadId; // ★ 現在のロードIDを記録
             currentIndex = index;
             const displayName = filesList[index].name;
-            
-            fileNameDisplay.textContent = displayName;
-            vrFileNameDisplay.setAttribute('value', displayName); 
-            
+            fileNameDisplay.textContent = displayName; vrFileNameDisplay.setAttribute('value', displayName); 
             fileSelect.value = index;
             if (!htmlCache[index]) showLoader(`読み込み中...`); 
 
             try {
                 const doc = await fetchWorkData(index);
                 
-                // 1. 古い要素を「正しく」削除し、remove() ライフサイクルを発火させる（メモリリーク防止）
-                while (contentHolder.firstChild) {
-                    contentHolder.removeChild(contentHolder.firstChild);
-                }
+                // ★ 通信中に別のロードが開始されていたら、古い処理をここで破棄（競合防止）
+                if (loadId !== currentLoadId) return;
+                
+                // 1. 古い要素とアセットを完全にクリア
+                while (contentHolder.firstChild) contentHolder.removeChild(contentHolder.firstChild);
+                const mainAssets = document.getElementById('mainAssets');
+                while (mainAssets.firstChild) mainAssets.removeChild(mainAssets.firstChild);
 
-                // 2. 外部ファイルの <script> を抽出してブラウザ上で実行する
+                // ★ 追加: 外部スクリプトによって a-scene 直下に追加された「野良エンティティ」の掃除
+                const allowedIds = ['baseSky', 'basePlane', 'baseAmbientLight', 'baseDirLight', 'contentHolder', 'rig', 'mainAssets'];
+                Array.from(sceneEl.children).forEach(child => {
+                    if (child.id && allowedIds.includes(child.id)) return;
+                    if (child.tagName && child.tagName.toLowerCase() === 'canvas') return;
+                    if (child.classList && child.classList.contains('a-canvas')) return;
+                    if (child.hasAttribute && child.hasAttribute('aframe-injected')) return;
+                    child.remove();
+                });
+
+                // 2. 外部ファイルの <script> 処理
                 const scripts = doc.querySelectorAll('script');
                 scripts.forEach(script => {
-                    // aframe自体などのライブラリは二重読み込み防止のためスキップ
-                    if (script.src && (script.src.includes('aframe') || script.src.includes('three'))) return;
-                    
-                    const newScript = document.createElement('script');
-                    if (script.src) {
-                        newScript.src = script.src;
-                    } else {
-                        newScript.textContent = script.textContent;
+                    // aframe等のライブラリは除外してキャッシュからも消す
+                    if (script.src && (script.src.includes('aframe') || script.src.includes('three'))) {
+                        script.remove(); return;
                     }
+                    const newScript = document.createElement('script');
+                    if (script.src) newScript.src = script.src;
+                    else newScript.textContent = script.textContent;
                     document.body.appendChild(newScript);
+                    
+                    // ★ キャッシュ(doc)からscriptを削除し、同じ作品を再度開いた時の二重実行を防ぐ
+                    script.remove();
                 });
 
                 const importedScene = doc.querySelector('a-scene');
                 if (importedScene) {
-                    // 3. 外部ファイル側の a-scene 属性（霧・影・レンダラー設定など）をビュワーのシーンにコピーする
-                    const attrsToCopy = ['fog', 'background', 'environment', 'renderer', 'shadow'];
-                    attrsToCopy.forEach(attr => {
-                        if (importedScene.hasAttribute(attr)) {
-                            sceneEl.setAttribute(attr, importedScene.getAttribute(attr));
-                        } else {
-                            sceneEl.removeAttribute(attr);
-                        }
+                    // 3. 属性コピー
+                    ['fog', 'background', 'environment', 'renderer', 'shadow'].forEach(attr => {
+                        if (importedScene.hasAttribute(attr)) sceneEl.setAttribute(attr, importedScene.getAttribute(attr));
+                        else sceneEl.removeAttribute(attr);
                     });
 
-                    // 4. 外部ファイル内に含まれる不要なカメラや重複要素を削除
-                    const duplicates = importedScene.querySelectorAll('a-sky, a-camera, [camera], #rig');
-                    duplicates.forEach(el => el.remove());
+                    // 4. 重複要素の削除
+                    importedScene.querySelectorAll('a-sky, a-camera, [camera], #rig').forEach(el => el.remove());
 
-                    // 外部ファイルの世界観を壊さないように、親側のデフォルトSky等を非表示にする設定（任意）
+                    // ★ 追加: 外部ファイルのアセットをメインの <a-assets> に統合して管理
+                    const importedAssets = importedScene.querySelector('a-assets');
+                    if (importedAssets) {
+                        Array.from(importedAssets.children).forEach(asset => mainAssets.appendChild(asset.cloneNode(true)));
+                        importedAssets.remove(); // contentHolderへの混入を防ぐ
+                    }
+
                     document.getElementById('baseSky').setAttribute('visible', !importedScene.hasAttribute('fog') && !importedScene.hasAttribute('background'));
                     document.getElementById('basePlane').setAttribute('visible', !importedScene.hasAttribute('fog') && !importedScene.hasAttribute('background'));
 
-                    // 5. 構築された要素をビュワー内に注入
-                    const children = Array.from(importedScene.children);
-                    children.forEach(child => {
-                        contentHolder.appendChild(child.cloneNode(true));
-                    });
+                    // 5. 要素の注入
+                    Array.from(importedScene.children).forEach(child => contentHolder.appendChild(child.cloneNode(true)));
                 } else {
-                    // a-sceneが存在しない通常のHTMLだった場合のフォールバック
                     contentHolder.innerHTML = doc.body.innerHTML;
                 }
-            } catch (e) { 
-                console.error("読み込みエラー:", e); 
-            }
+            } catch (e) { console.error("読み込みエラー:", e); }
 
-            hideLoader();
-            resetViewpoint(); 
-            preloadNextWork();
-            resetAutoSwitchTimer();
+            hideLoader(); resetViewpoint(); preloadNextWork(); resetAutoSwitchTimer();
         }
 
+        // --- 以下の関数群は変更なし ---
         function switchWork(direction) {
             let next = (direction === 'next') ? currentIndex + 1 : currentIndex - 1;
             if (next >= filesList.length) next = 0;
@@ -461,7 +332,7 @@
         function resetAutoSwitchTimer() {
             if (autoTimer) clearTimeout(autoTimer);
             const interval = parseInt(document.getElementById('autoSwitchSelect').value);
-            if (interval > 0) autoTimer = setTimeout(() => loadWork((currentIndex + 1) % filesList.length), interval);
+            if (interval > 0) autoTimer = setTimeout(() => switchWork('next'), interval);
         }
 
         function resetViewpoint() {
@@ -475,9 +346,6 @@
             cameraEl.object3D.rotation.set(0, 0, 0);
         }
 
-        // ==========================================
-        // UI & VR メニュー連携
-        // ==========================================
         function toggleFileNameDisplay(isON) {
             fileNameDisplay.style.display = isON ? 'block' : 'none';
             vrFileNameDisplay.setAttribute('visible', isON);
@@ -487,31 +355,19 @@
 
         function setupVRMenuEvents() {
             document.querySelectorAll('.vr-btn').forEach(btn => {
-                btn.addEventListener('mouseenter', function() {
-                    this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#E55' : '#666');
-                });
-                btn.addEventListener('mouseleave', function() {
-                    this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#A33' : '#444');
-                });
+                btn.addEventListener('mouseenter', function() { this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#E55' : '#666'); });
+                btn.addEventListener('mouseleave', function() { this.setAttribute('material', 'color', this.id === 'vrBtnClose' ? '#A33' : '#444'); });
             });
-
             document.getElementById('vrBtnPrev').addEventListener('click', () => switchWork('prev'));
             document.getElementById('vrBtnNext').addEventListener('click', () => switchWork('next'));
             document.getElementById('vrBtnClose').addEventListener('click', () => document.getElementById('vrMenu').setAttribute('visible', false));
-            
             document.getElementById('vrBtnAuto').addEventListener('click', function() {
                 vrAutoIndex = (vrAutoIndex + 1) % vrAutoIntervals.length;
                 let val = vrAutoIntervals[vrAutoIndex];
-                let text = val === 0 ? 'OFF' : (val/1000) + 's';
-                this.setAttribute('text', 'value', 'Auto Switch: ' + text);
-                document.getElementById('autoSwitchSelect').value = val;
-                resetAutoSwitchTimer();
+                this.setAttribute('text', 'value', 'Auto Switch: ' + (val === 0 ? 'OFF' : (val/1000) + 's'));
+                document.getElementById('autoSwitchSelect').value = val; resetAutoSwitchTimer();
             });
-
-            document.getElementById('vrBtnName').addEventListener('click', function() {
-                let isON = document.getElementById('showNameToggle').checked;
-                toggleFileNameDisplay(!isON);
-            });
+            document.getElementById('vrBtnName').addEventListener('click', function() { toggleFileNameDisplay(!document.getElementById('showNameToggle').checked); });
         }
 
         const optionsModal = document.getElementById('optionsModal');
@@ -521,10 +377,7 @@
         function populateFileList() {
             fileSelect.innerHTML = '';
             filesList.forEach((file, idx) => {
-                let opt = document.createElement('option');
-                opt.value = idx;
-                opt.textContent = file.name;
-                fileSelect.appendChild(opt);
+                let opt = document.createElement('option'); opt.value = idx; opt.textContent = file.name; fileSelect.appendChild(opt);
             });
             fileSelect.addEventListener('change', (e) => loadWork(parseInt(e.target.value)));
         }
@@ -533,8 +386,7 @@
             document.getElementById('showNameToggle').onchange = (e) => toggleFileNameDisplay(e.target.checked);
             document.getElementById('autoSwitchSelect').onchange = (e) => {
                 vrAutoIndex = vrAutoIntervals.indexOf(parseInt(e.target.value));
-                let text = vrAutoIndex === 0 ? 'OFF' : (vrAutoIntervals[vrAutoIndex]/1000) + 's';
-                document.getElementById('vrBtnAuto').setAttribute('text', 'value', 'Auto Switch: ' + text);
+                document.getElementById('vrBtnAuto').setAttribute('text', 'value', 'Auto Switch: ' + (vrAutoIndex === 0 ? 'OFF' : (vrAutoIntervals[vrAutoIndex]/1000) + 's'));
                 resetAutoSwitchTimer();
             };
             document.getElementById('gyroToggle').onchange = (e) => {
@@ -547,7 +399,6 @@
                 document.getElementById('movement-ui').style.display = isEnabled ? 'flex' : 'none';
                 sceneEl.setAttribute('dpad-movement', 'enabled', isEnabled);
             };
-            
             toggleFileNameDisplay(document.getElementById('showNameToggle').checked);
         }
 
