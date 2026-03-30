@@ -2,473 +2,167 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebXR Persistent Viewer</title>
+    <title>Procedural Frying Egg</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
-    
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; touch-action: none; user-select: none; }
-        #loadingOverlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999;
-            transition: opacity 0.5s; pointer-events: none; opacity: 0;
-        }
-        #loadingOverlay.visible { opacity: 1; pointer-events: auto; }
-        .ui-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; }
-        .base-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #fff; color: #333; border: none; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-        #fileNameDisplay { position: fixed; top: 15px; left: 15px; z-index: 100; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; font-size: 1.2rem; display: block; }
-        #optionsBtn { position: fixed; top: 15px; right: 15px; z-index: 100; padding: 8px 15px; }
-        #optionsModal {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: rgba(30, 30, 30, 0.95); padding: 25px; border-radius: 10px; z-index: 10000; display: none; flex-direction: column; gap: 15px; width: 80%; max-width: 400px; box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-        }
-        #optionsModal.visible { display: flex; }
-        .modal-row { display: flex; justify-content: space-between; align-items: center; }
-        .modal-row label { font-size: 1rem; }
-        .modal-row select, .modal-row input { padding: 5px; font-size: 1rem; }
-        #movement-ui { position: fixed; bottom: 80px; left: 20px; right: 20px; z-index: 50; display: flex; justify-content: space-between; pointer-events: none; }
-        #dpad-container { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 5px; pointer-events: auto; }
-        .dpad-btn { width: 100%; height: 100%; border-radius: 10px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
-        .dpad-btn:active { background: rgba(255,255,255,0.8); }
-        #btn-fwd { grid-column: 2; grid-row: 1; }
-        #btn-left { grid-column: 1; grid-row: 2; }
-        #btn-right { grid-column: 3; grid-row: 2; }
-        #btn-back { grid-column: 2; grid-row: 3; }
-        #y-container { display: flex; flex-direction: column; gap: 10px; justify-content: center; pointer-events: auto; }
-        .y-btn { width: 50px; height: 50px; border-radius: 25px; font-weight: bold; font-size: 1.2rem; background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.3); color: #000; display: flex; justify-content: center; align-items: center; }
-        .y-btn:active { background: rgba(255,255,255,0.8); }
-    </style>
-
     <script>
-        // ==========================================
-        // 【防衛機構1】ウィンドウイベントの監視と強制解除
-        // ==========================================
-        var _originalWinAdd = window.addEventListener;
-        var _originalWinRemove = window.removeEventListener;
-        window._trackedWorkEvents = [];
-        window._isTrackingEvents = false;
-
-        window.addEventListener = function(type, listener, options) {
-            if (window._isTrackingEvents) {
-                window._trackedWorkEvents.push({type: type, listener: listener, options: options});
-            }
-            return _originalWinAdd.call(window, type, listener, options);
-        };
-        window.removeEventListener = function(type, listener, options) {
-            if (window._isTrackingEvents) {
-                window._trackedWorkEvents = window._trackedWorkEvents.filter(function(e) {
-                    return !(e.type === type && e.listener === listener);
+        /**
+         * 修正1: カスタムOrbitControls
+         * DOM(setAttribute)ではなく、Three.jsのコア(object3D)を直接操作してクラッシュを防ぐ
+         */
+        AFRAME.registerComponent('custom-orbit-controls', {
+            init: function() {
+                this.yaw = 0;
+                this.pitch = 0.5;
+                this.radius = 5;
+                this.isDragging = false;
+                this.lastMouse = { x: 0, y: 0 };
+                
+                window.addEventListener('mousedown', (e) => { this.isDragging = true; this.lastMouse = { x: e.clientX, y: e.clientY }; });
+                window.addEventListener('mouseup', () => { this.isDragging = false; });
+                window.addEventListener('mousemove', (e) => {
+                    if (!this.isDragging) return;
+                    const dx = (e.clientX - this.lastMouse.x) * 0.01;
+                    const dy = (e.clientY - this.lastMouse.y) * 0.01;
+                    this.yaw -= dx;
+                    this.pitch = Math.max(0.1, Math.min(Math.PI - 0.1, this.pitch + dy));
+                    this.lastMouse = { x: e.clientX, y: e.clientY };
+                    this.updateCamera();
                 });
-            }
-            return _originalWinRemove.call(window, type, listener, options);
-        };
-
-        function clearTrackedEvents() {
-            window._isTrackingEvents = false; // 削除中の自己記録を防ぐ
-            for (var i = 0; i < window._trackedWorkEvents.length; i++) {
-                var ev = window._trackedWorkEvents[i];
-                _originalWinRemove.call(window, ev.type, ev.listener, ev.options);
-            }
-            window._trackedWorkEvents = [];
-        }
-
-        // ==========================================
-        // コンポーネント定義
-        // ==========================================
-        var originalRegisterComponent = AFRAME.registerComponent;
-        AFRAME.registerComponent = function (name, definition) {
-            if (AFRAME.components[name]) delete AFRAME.components[name];
-            return originalRegisterComponent.call(this, name, definition);
-        };
-
-        AFRAME.registerComponent("quest-controller-actions", {
-            init: function () {
-                this.rig = document.getElementById("rig");
-                this.isRightUp = false; this.isLeftDown = false; this.speed = 0.05;
-                this.isJumping = false; this.jumpVelocity = 0; this.gravity = 0.008; this.baseY = 0;
-                var leftCtrl = document.getElementById("leftController"), rightCtrl = document.getElementById("rightController"), vrMenu = document.getElementById("vrMenu");
-                leftCtrl.addEventListener("ybuttondown", () => {
-                    if (this.el.sceneEl.is("vr-mode")) vrMenu.setAttribute("visible", !vrMenu.getAttribute("visible"));
-                    else document.getElementById("optionsModal").classList.add("visible");
-                });
-                leftCtrl.addEventListener("xbuttondown", () => {
-                    if (!this.isJumping) { this.baseY = this.rig.object3D.position.y; this.jumpVelocity = 0.15; this.isJumping = true; }
-                });
-                rightCtrl.addEventListener("gripdown", () => { this.isRightUp = true; }); rightCtrl.addEventListener("gripup", () => { this.isRightUp = false; });
-                leftCtrl.addEventListener("gripdown", () => { this.isLeftDown = true; }); leftCtrl.addEventListener("gripup", () => { this.isLeftDown = false; });
+                this.updateCamera();
             },
-            tick: function () {
-                if (this.isRightUp && !this.isJumping) this.rig.object3D.position.y += this.speed;
-                if (this.isLeftDown && !this.isJumping) this.rig.object3D.position.y -= this.speed;
-                if (this.isJumping) {
-                    this.rig.object3D.position.y += this.jumpVelocity; this.jumpVelocity -= this.gravity;
-                    if (this.rig.object3D.position.y <= this.baseY) { this.rig.object3D.position.y = this.baseY; this.isJumping = false; }
-                }
+            updateCamera: function() {
+                const x = this.radius * Math.sin(this.pitch) * Math.sin(this.yaw);
+                const y = this.radius * Math.cos(this.pitch);
+                const z = this.radius * Math.sin(this.pitch) * Math.cos(this.yaw);
+                
+                // setAttributeの代わりに直接Three.jsの座標を更新（安全で高速）
+                this.el.object3D.position.set(x, y, z);
+                this.el.object3D.lookAt(0, 0, 0);
             }
         });
 
-        AFRAME.registerComponent("pinch-zoom", {
-            init: function () {
-                this.initialDistance = 0; this.initialZ = 0; this.rig = document.getElementById("rig");
-                this.el.sceneEl.canvas.addEventListener("touchstart", (e) => {
-                    if (e.touches.length === 2) { this.initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); this.initialZ = this.rig.object3D.position.z; }
-                }, {passive: false});
-                this.el.sceneEl.canvas.addEventListener("touchmove", (e) => {
-                    if (e.touches.length === 2 && this.initialDistance) {
-                        e.preventDefault();
-                        var currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                        this.rig.object3D.position.z = Math.max(0.5, Math.min(this.initialZ - (currentDistance - this.initialDistance) * 0.02, 30));
-                    }
-                }, {passive: false});
-                this.el.sceneEl.canvas.addEventListener("touchend", () => { this.initialDistance = 0; });
-            }
-        });
-
-        AFRAME.registerComponent("custom-touch-look", {
-            schema: { enabled: {default: false} },
-            init: function () {
-                this.pitch = 0; this.yaw = 0; this.isDragging = false; this.lastPos = {x: 0, y: 0}; this.camera = document.getElementById("camera");
-                var canvas = this.el.sceneEl.canvas;
-                canvas.addEventListener("touchstart", (e) => { if (e.touches.length === 1 && this.data.enabled) { this.isDragging = true; this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY }; } }, {passive: false});
-                canvas.addEventListener("touchmove", (e) => {
-                    if (this.isDragging && e.touches.length === 1 && this.data.enabled) {
-                        e.preventDefault();
-                        this.yaw -= (e.touches[0].pageX - this.lastPos.x) * 0.005;
-                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch - (e.touches[0].pageY - this.lastPos.y) * 0.005)); 
-                        this.lastPos = { x: e.touches[0].pageX, y: e.touches[0].pageY };
-                        this.camera.object3D.rotation.set(this.pitch, this.yaw, 0);
-                    }
-                }, {passive: false});
-                canvas.addEventListener("touchend", () => { this.isDragging = false; });
-            }
-        });
-
-        AFRAME.registerComponent("dpad-movement", {
-            schema: { enabled: {default: false} },
-            init: function () {
-                this.rig = document.getElementById("rig"); this.camera = document.getElementById("camera"); this.moveVector = new THREE.Vector3(0,0,0); this.speed = 0.08;
-                this.btnStates = { "btn-fwd": false, "btn-back": false, "btn-left": false, "btn-right": false, "btn-up": false, "btn-down": false };
-                var bindBtn = (id) => {
-                    var btn = document.getElementById(id); if(!btn) return;
-                    var press = (e) => { if (e.cancelable) e.preventDefault(); this.btnStates[id] = true; };
-                    var release = (e) => { if (e.cancelable) e.preventDefault(); this.btnStates[id] = false; };
-                    btn.addEventListener("touchstart", press, {passive: false}); btn.addEventListener("touchend", release, {passive: false});
-                    btn.addEventListener("mousedown", press); btn.addEventListener("mouseup", release); btn.addEventListener("mouseleave", release);
+        /**
+         * メイン生成コンポーネント
+         * （あなたの素晴らしいロジックをそのまま活かしています）
+         */
+        AFRAME.registerComponent('frying-egg-generator', {
+            init: function() {
+                this.geometries = [];
+                this.materials = [];
+                
+                this.CONFIG = {
+                    plate: { radius: 2.0, height: 0.1, color: '#1a1a1a' },
+                    yolk: { radius: 0.5, height: 0.3, color: '#ff9900' },
+                    white: { radius: 1.5, segments: 128, color: '#fcfcfc' },
+                    particleCount: 50
                 };
-                ["btn-fwd", "btn-back", "btn-left", "btn-right", "btn-up", "btn-down"].forEach(bindBtn);
+
+                this.CONFIG.plate.y = this.CONFIG.plate.height / 2;
+                this.CONFIG.white.y = this.CONFIG.plate.height + 0.02;
+                this.CONFIG.yolk.y = this.CONFIG.white.y + 0.02;
+
+                this.buildPlate();
+                this.buildWhite();
+                this.buildYolk();
+                this.buildParticles();
             },
-            tick: function () {
-                if (!this.data.enabled) return;
-                this.moveVector.set(0, 0, 0);
-                if (this.btnStates["btn-fwd"]) this.moveVector.z -= 1; if (this.btnStates["btn-back"]) this.moveVector.z += 1;
-                if (this.btnStates["btn-left"]) this.moveVector.x -= 1; if (this.btnStates["btn-right"]) this.moveVector.x += 1;
-                if (this.btnStates["btn-up"]) this.moveVector.y += 1; if (this.btnStates["btn-down"]) this.moveVector.y -= 1;
-                if (this.moveVector.lengthSq() === 0) return;
-                var yRot = this.camera.object3D.rotation.y;
-                this.rig.object3D.position.x += (this.moveVector.x * Math.cos(yRot) + this.moveVector.z * Math.sin(yRot)) * this.speed;
-                this.rig.object3D.position.z += (-this.moveVector.x * Math.sin(yRot) + this.moveVector.z * Math.cos(yRot)) * this.speed;
-                this.rig.object3D.position.y += this.moveVector.y * this.speed;
+
+            buildPlate: function() {
+                const geo = new THREE.CylinderGeometry(this.CONFIG.plate.radius, this.CONFIG.plate.radius, this.CONFIG.plate.height, 64);
+                const mat = new THREE.MeshStandardMaterial({ color: this.CONFIG.plate.color, roughness: 0.3, metalness: 0.8 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.y = this.CONFIG.plate.y;
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                this.el.setObject3D('plate', mesh);
+                this.geometries.push(geo);
+                this.materials.push(mat);
+            },
+
+            buildWhite: function() {
+                const geo = new THREE.PlaneGeometry(3, 3, this.CONFIG.white.segments, this.CONFIG.white.segments);
+                geo.rotateX(-Math.PI / 2);
+                
+                const mat = new THREE.ShaderMaterial({
+                    uniforms: { uTime: { value: 0 } },
+                    vertexShader: `
+                        uniform float uTime;
+                        void main() {
+                            vec3 pos = position;
+                            float dist = length(pos.xz);
+                            float noise = sin(pos.x * 20.0 + uTime * 5.0) * sin(pos.z * 20.0 + uTime * 3.0);
+                            pos.y += noise * 0.02 * (dist / 1.0);
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        void main() { 
+                            gl_FragColor = vec4(0.95, 0.95, 0.9, 1.0); 
+                        }
+                    `
+                });
+
+                this.whiteMesh = new THREE.Mesh(geo, mat);
+                this.whiteMesh.position.y = this.CONFIG.white.y;
+                this.el.setObject3D('white', this.whiteMesh);
+                this.geometries.push(geo);
+                this.materials.push(mat);
+            },
+
+            buildYolk: function() {
+                const geo = new THREE.SphereGeometry(this.CONFIG.yolk.radius, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2);
+                const mat = new THREE.MeshStandardMaterial({ color: this.CONFIG.yolk.color, roughness: 0.1, metalness: 0.2 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.y = this.CONFIG.yolk.y;
+                this.el.setObject3D('yolk', mesh);
+                this.geometries.push(geo);
+                this.materials.push(mat);
+            },
+
+            buildParticles: function() {
+                const geo = new THREE.BufferGeometry();
+                const pos = new Float32Array(this.CONFIG.particleCount * 3);
+                for(let i=0; i<this.CONFIG.particleCount*3; i+=3) {
+                    pos[i] = (Math.random()-0.5) * 2;
+                    pos[i+1] = this.CONFIG.white.y;
+                    pos[i+2] = (Math.random()-0.5) * 2;
+                }
+                geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                const mat = new THREE.PointsMaterial({ color: 0xffcc00, size: 0.05 });
+                const points = new THREE.Points(geo, mat);
+                this.el.setObject3D('particles', points);
+                this.geometries.push(geo);
+                this.materials.push(mat);
+            },
+
+            tick: function(time) {
+                // timeが取得できない最初のフレームでのNaNエラーを回避
+                const safeTime = time || 0;
+                
+                if (this.whiteMesh && this.whiteMesh.material.uniforms) {
+                    this.whiteMesh.material.uniforms.uTime.value = safeTime * 0.001;
+                }
+                const points = this.el.getObject3D('particles');
+                if(points) {
+                    points.rotation.y += 0.001;
+                    points.position.y = Math.sin(safeTime * 0.002) * 0.01;
+                }
             }
         });
     </script>
 </head>
 <body>
 
-    <div id="loadingOverlay"><h2 id="loadingMsg">読込中...</h2></div>
-    <div id="fileNameDisplay"></div>
-    <button id="optionsBtn" class="base-btn">⚙️ 設定</button>
+<a-scene background="color: #222" renderer="antialias: true;">
+    <a-entity id="camera-rig" custom-orbit-controls>
+        <a-entity camera near="0.1" far="1000" position="0 0 0"></a-entity>
+    </a-entity>
 
-    <div class="ui-container">
-        <button id="prevBtn" class="base-btn">前へ</button>
-        <button id="nextBtn" class="base-btn">次へ</button>
-    </div>
+    <a-entity frying-egg-generator></a-entity>
 
-    <div id="movement-ui">
-        <div id="dpad-container">
-            <div id="btn-fwd" class="dpad-btn">W</div><div id="btn-left" class="dpad-btn">A</div><div id="btn-right" class="dpad-btn">D</div><div id="btn-back" class="dpad-btn">S</div>
-        </div>
-        <div id="y-container"><div id="btn-up" class="y-btn">▲</div><div id="btn-down" class="y-btn">▼</div></div>
-    </div>
+    <a-entity light="type: hemisphere; color: #ffffff; groundColor: #000000; intensity: 0.8"></a-entity>
+    <a-entity light="type: directional; color: #ffffff; intensity: 1.0; castShadow: true" position="2 5 2"></a-entity>
+</a-scene>
 
-    <div id="optionsModal">
-        <h3 style="margin-top: 0; text-align: center;">オプション</h3>
-        <div class="modal-row"><label for="fileSelect">ファイルへ移動:</label><select id="fileSelect"></select></div>
-        <div class="modal-row">
-            <label for="autoSwitchSelect">自動切り替え:</label>
-            <select id="autoSwitchSelect"><option value="0">オフ</option><option value="5000">5秒</option><option value="10000">10秒</option><option value="30000">30秒</option></select>
-        </div>
-        <div class="modal-row"><label for="showNameToggle">ファイル名表示:</label><input type="checkbox" id="showNameToggle" checked></div>
-        <div class="modal-row"><label for="gyroToggle">スマホジャイロ (傾き):</label><input type="checkbox" id="gyroToggle"></div>
-        <div class="modal-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;"><label for="movementToggle" style="color:#7BC8A4; font-weight:bold;">タッチ移動 UI (XYZ軸移動)</label><input type="checkbox" id="movementToggle" checked></div>
-        <button id="closeOptionsBtn" class="base-btn" style="background: #ff4757; color: #fff; margin-top: 10px;">閉じる</button>
-    </div>
-
-    <a-scene webxr="optionalFeatures: hit-test" device-orientation-permission-ui="enabled: false" pinch-zoom custom-touch-look="enabled: true" dpad-movement="enabled: true" quest-controller-actions>
-        <a-assets id="mainAssets"></a-assets>
-
-        <a-sky color="#ECECEC" id="baseSky"></a-sky>
-        <a-plane id="basePlane" position="0 -0.01 0" rotation="-90 0 0" width="100" height="100" color="#7BC8A4" static-body></a-plane>
-        <a-entity id="baseAmbientLight" light="type: ambient; color: #BBB"></a-entity>
-        <a-entity id="baseDirLight" light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
-
-        <a-entity id="contentHolder" position="0 0 0"></a-entity>
-
-        <a-entity id="rig" movement-controls="controls: gamepad, keyboard" position="0 0 5">
-            <a-entity id="camera" camera position="0 1.6 0" look-controls="enabled: false; magicWindowTrackingEnabled: false; pointerLockEnabled: false">
-                <a-text id="vrFileNameDisplay" value="" position="0 0.6 -1.5" align="center" width="2" color="#333" visible="true"></a-text>
-            </a-entity>
-            <a-entity id="leftController" oculus-touch-controls="hand: left">
-                <a-entity id="vrMenu" visible="false" position="0 0.15 -0.05" rotation="-45 0 0">
-                    <a-plane width="0.35" height="0.35" color="#111" opacity="0.95" border-radius="0.05"></a-plane>
-                    <a-text value="VR Options Menu" position="0 0.14 0.01" align="center" width="0.8" color="#7BC8A4"></a-text>
-                    <a-entity class="vr-btn" id="vrBtnPrev" position="-0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: < Prev; align: center; width: 0.6"></a-entity>
-                    <a-entity class="vr-btn" id="vrBtnNext" position="0.08 0.07 0.01" geometry="primitive: plane; width: 0.14; height: 0.05" material="color: #444" text="value: Next >; align: center; width: 0.6"></a-entity>
-                    <a-entity class="vr-btn" id="vrBtnAuto" position="0 0.0 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: Auto Switch: OFF; align: center; width: 0.6"></a-entity>
-                    <a-entity class="vr-btn" id="vrBtnName" position="0 -0.07 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #444" text="value: File Name: ON; align: center; width: 0.6"></a-entity>
-                    <a-entity class="vr-btn" id="vrBtnClose" position="0 -0.14 0.01" geometry="primitive: plane; width: 0.3; height: 0.05" material="color: #A33" text="value: Close Menu; align: center; width: 0.6"></a-entity>
-                </a-entity>
-            </a-entity>
-            <a-entity id="rightController" oculus-touch-controls="hand: right" raycaster="objects: .vr-btn; showLine: true; far: 2" cursor="rayOrigin: entity"></a-entity>
-        </a-entity>
-    </a-scene>
-
-    <script>
-        var GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzNlRQKSABT7XgRwcjurtzvI3fR4SGRBSU444BXzKoxv6ZAoCYiZzIvTe6oVDzAT4oZ/exec";
-        
-        var filesList = []; 
-        var currentIndex = 0;
-        var htmlCache = {}; 
-        var autoTimer = null; 
-        var vrAutoIntervals = [0, 5000, 10000, 30000];
-        var vrAutoIndex = 0;
-        var currentLoadId = 0;
-        var isAppInitialized = false;
-
-        var loader = document.getElementById("loadingOverlay");
-        var contentHolder = document.getElementById("contentHolder");
-        var fileNameDisplay = document.getElementById("fileNameDisplay");
-        var vrFileNameDisplay = document.getElementById("vrFileNameDisplay");
-        var fileSelect = document.getElementById("fileSelect");
-        var rig = document.getElementById("rig");
-        var cameraEl = document.getElementById("camera");
-        var sceneEl = document.querySelector("a-scene");
-
-        async function init() {
-            if (isAppInitialized) return;
-            isAppInitialized = true;
-
-            setupVRMenuEvents();
-            try {
-                showLoader("リスト取得中...");
-                var response = await fetch(GAS_WEB_APP_URL);
-                filesList = await response.json();
-                if (filesList.length > 0) { populateFileList(); updateOptionsUI(); await loadWork(0); } 
-                else { showLoader("ファイルがありません。"); }
-            } catch (e) { showLoader("通信エラー"); console.error(e); }
-        }
-
-        async function fetchWorkData(index) {
-            if (htmlCache[index]) return htmlCache[index];
-            var response = await fetch(GAS_WEB_APP_URL + "?fileId=" + filesList[index].id);
-            var htmlText = await response.text();
-            htmlCache[index] = htmlText;
-            return htmlText;
-        }
-
-        function preloadNextWork() { fetchWorkData((currentIndex + 1) % filesList.length).catch(function(e) { console.error(e); }); }
-
-        async function loadWork(index) {
-            var loadId = ++currentLoadId;
-            currentIndex = index;
-            var displayName = filesList[index].name;
-            fileNameDisplay.textContent = displayName; 
-            vrFileNameDisplay.setAttribute("value", displayName); 
-            fileSelect.value = index;
-            if (!htmlCache[index]) showLoader("読み込み中..."); 
-
-            try {
-                var htmlText = await fetchWorkData(index);
-                if (loadId !== currentLoadId) return;
-
-                // 1. ゴミ掃除フェーズ
-                clearTrackedEvents(); // 前の作品が登録したイベントを全削除
-
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(htmlText, "text/html");
-                
-                contentHolder.innerHTML = "";
-                document.getElementById("mainAssets").innerHTML = "";
-
-                // 【防衛機構2】A-Frameの管理外にある生Three.jsメッシュを強制削除
-                var scene3D = sceneEl.object3D;
-                for (var i = scene3D.children.length - 1; i >= 0; i--) {
-                    var child = scene3D.children[i];
-                    // el(A-Frameエンティティ)を持たない、純粋なMeshやGroupのみを消去
-                    if (!child.el && (child.type === "Mesh" || child.type === "Group")) {
-                        scene3D.remove(child);
-                    }
-                }
-
-                // A-Frameエンティティの掃除（野良タグ）
-                var allowedIds = ["baseSky", "basePlane", "baseAmbientLight", "baseDirLight", "contentHolder", "rig", "mainAssets"];
-                Array.from(sceneEl.children).forEach(function(child) {
-                    if (child.id && allowedIds.includes(child.id)) return;
-                    if (child.tagName && child.tagName.toLowerCase() === "canvas") return;
-                    if (child.classList && (child.classList.contains("a-canvas") || child.classList.contains("a-enter-vr"))) return;
-                    if (child.hasAttribute && child.hasAttribute("aframe-injected")) return;
-                    child.remove();
-                });
-
-                document.querySelectorAll(".injected-work-element").forEach(function(el) { el.remove(); });
-                document.querySelectorAll("audio, video").forEach(function(media) {
-                    media.pause(); media.removeAttribute("src"); media.load(); media.remove();
-                });
-                if (typeof THREE !== "undefined" && THREE.Cache) THREE.Cache.clear();
-
-                // 2. 注入フェーズ
-                window._isTrackingEvents = true; // ここから外部ファイルのイベントトラッキング開始
-
-                doc.querySelectorAll('style, link[rel="stylesheet"]').forEach(function(style) {
-                    var newStyle = style.cloneNode(true);
-                    newStyle.classList.add("injected-work-element");
-                    document.head.appendChild(newStyle);
-                });
-
-                doc.querySelectorAll("script").forEach(function(script) {
-                    if (script.src && (script.src.includes("aframe") || script.src.includes("three"))) return;
-                    var newScript = document.createElement("script");
-                    newScript.classList.add("injected-work-element");
-                    if (script.src) newScript.src = script.src;
-                    else newScript.textContent = script.textContent;
-                    document.body.appendChild(newScript);
-                });
-
-                var importedScene = doc.querySelector("a-scene");
-                if (importedScene) {
-                    ["fog", "background", "environment", "renderer", "shadow"].forEach(function(attr) {
-                        if (importedScene.hasAttribute(attr)) sceneEl.setAttribute(attr, importedScene.getAttribute(attr));
-                        else sceneEl.removeAttribute(attr);
-                    });
-
-                    var importedAssets = importedScene.querySelector("a-assets");
-                    if (importedAssets) {
-                        document.getElementById("mainAssets").innerHTML = importedAssets.innerHTML;
-                        importedAssets.remove();
-                    }
-
-                    importedScene.querySelectorAll("a-sky, a-camera, [camera], #rig").forEach(function(el) { el.remove(); });
-
-                    var hasEnv = importedScene.hasAttribute("fog") || importedScene.hasAttribute("background") || importedScene.querySelector("[environment]");
-                    document.getElementById("baseSky").setAttribute("visible", !hasEnv);
-                    document.getElementById("basePlane").setAttribute("visible", !hasEnv);
-
-                    contentHolder.innerHTML = importedScene.innerHTML;
-                } else {
-                    contentHolder.innerHTML = doc.body.innerHTML;
-                }
-
-                setTimeout(function() {
-                    window.dispatchEvent(new Event("DOMContentLoaded"));
-                    window.dispatchEvent(new Event("load"));
-                }, 100);
-
-            } catch (e) { 
-                console.error("読み込みエラー:", e); 
-            }
-
-            hideLoader(); resetViewpoint(); preloadNextWork(); resetAutoSwitchTimer();
-        }
-
-        function switchWork(direction) {
-            var next = (direction === "next") ? currentIndex + 1 : currentIndex - 1;
-            if (next >= filesList.length) next = 0;
-            if (next < 0) next = filesList.length - 1;
-            loadWork(next);
-        }
-
-        function resetAutoSwitchTimer() {
-            if (autoTimer) clearTimeout(autoTimer);
-            var interval = parseInt(document.getElementById("autoSwitchSelect").value);
-            if (interval > 0) autoTimer = setTimeout(function() { switchWork("next"); }, interval);
-        }
-
-        function resetViewpoint() {
-            rig.object3D.position.set(0, 0, 5);
-            var touchLook = sceneEl.components["custom-touch-look"];
-            if(touchLook) { touchLook.pitch = 0; touchLook.yaw = 0; }
-            if (cameraEl.components["look-controls"]) {
-                cameraEl.components["look-controls"].pitchObject.rotation.x = 0;
-                cameraEl.components["look-controls"].yawObject.rotation.y = 0;
-            }
-            cameraEl.object3D.rotation.set(0, 0, 0);
-        }
-
-        function toggleFileNameDisplay(isON) {
-            fileNameDisplay.style.display = isON ? "block" : "none";
-            vrFileNameDisplay.setAttribute("visible", isON);
-            document.getElementById("showNameToggle").checked = isON;
-            document.getElementById("vrBtnName").setAttribute("text", "value", "File Name: " + (isON ? "ON" : "OFF"));
-        }
-
-        function setupVRMenuEvents() {
-            document.querySelectorAll(".vr-btn").forEach(function(btn) {
-                btn.addEventListener("mouseenter", function() { this.setAttribute("material", "color", this.id === "vrBtnClose" ? "#E55" : "#666"); });
-                btn.addEventListener("mouseleave", function() { this.setAttribute("material", "color", this.id === "vrBtnClose" ? "#A33" : "#444"); });
-            });
-            document.getElementById("vrBtnPrev").addEventListener("click", function() { switchWork("prev"); });
-            document.getElementById("vrBtnNext").addEventListener("click", function() { switchWork("next"); });
-            document.getElementById("vrBtnClose").addEventListener("click", function() { document.getElementById("vrMenu").setAttribute("visible", false); });
-            document.getElementById("vrBtnAuto").addEventListener("click", function() {
-                vrAutoIndex = (vrAutoIndex + 1) % vrAutoIntervals.length;
-                var val = vrAutoIntervals[vrAutoIndex];
-                this.setAttribute("text", "value", "Auto Switch: " + (val === 0 ? "OFF" : (val/1000) + "s"));
-                document.getElementById("autoSwitchSelect").value = val; resetAutoSwitchTimer();
-            });
-            document.getElementById("vrBtnName").addEventListener("click", function() { toggleFileNameDisplay(!document.getElementById("showNameToggle").checked); });
-        }
-
-        var optionsModal = document.getElementById("optionsModal");
-        document.getElementById("optionsBtn").onclick = function() { optionsModal.classList.add("visible"); };
-        document.getElementById("closeOptionsBtn").onclick = function() { optionsModal.classList.remove("visible"); };
-
-        function populateFileList() {
-            fileSelect.innerHTML = "";
-            filesList.forEach(function(file, idx) {
-                var opt = document.createElement("option"); opt.value = idx; opt.textContent = file.name; fileSelect.appendChild(opt);
-            });
-            fileSelect.addEventListener("change", function(e) { loadWork(parseInt(e.target.value)); });
-        }
-
-        function updateOptionsUI() {
-            document.getElementById("showNameToggle").onchange = function(e) { toggleFileNameDisplay(e.target.checked); };
-            document.getElementById("autoSwitchSelect").onchange = function(e) {
-                vrAutoIndex = vrAutoIntervals.indexOf(parseInt(e.target.value));
-                document.getElementById("vrBtnAuto").setAttribute("text", "value", "Auto Switch: " + (vrAutoIndex === 0 ? "OFF" : (vrAutoIntervals[vrAutoIndex]/1000) + "s"));
-                resetAutoSwitchTimer();
-            };
-            document.getElementById("gyroToggle").onchange = function(e) {
-                var isGyroOn = e.target.checked;
-                cameraEl.setAttribute("look-controls", { magicWindowTrackingEnabled: isGyroOn, enabled: isGyroOn });
-                sceneEl.setAttribute("custom-touch-look", "enabled", !isGyroOn);
-            };
-            document.getElementById("movementToggle").onchange = function(e) {
-                var isEnabled = e.target.checked;
-                document.getElementById("movement-ui").style.display = isEnabled ? "flex" : "none";
-                sceneEl.setAttribute("dpad-movement", "enabled", isEnabled);
-            };
-            toggleFileNameDisplay(document.getElementById("showNameToggle").checked);
-        }
-
-        document.getElementById("rightController").addEventListener("abuttondown", function() { switchWork("next"); });
-        document.getElementById("rightController").addEventListener("bbuttondown", function() { switchWork("prev"); });
-        document.getElementById("nextBtn").onclick = function() { switchWork("next"); };
-        document.getElementById("prevBtn").onclick = function() { switchWork("prev"); };
-
-        function showLoader(msg) { document.getElementById("loadingMsg").textContent = msg; loader.classList.add("visible"); }
-        function hideLoader() { loader.classList.remove("visible"); }
-
-        window.addEventListener("load", init, { once: true });
-    </script>
 </body>
 </html>
